@@ -1,0 +1,34 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# Çalışma dizinleri
+work/
+results/
+logs/
+
+# Yapılandırma (gizli bilgiler)
+config.py.bak
+.env
+
+# Bot PID
+telegram_bot.pid
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Zip dosyaları
+*.zip

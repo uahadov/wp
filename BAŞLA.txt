@@ -1,0 +1,140 @@
+╔════════════════════════════════════════════════════════════╗
+║                                                            ║
+║    WordPress Plugin Zafiyet Tarayıcı - HIZLI BAŞLANGIÇ   ║
+║                                                            ║
+╚════════════════════════════════════════════════════════════╝
+
+📋 HIZLI KURULUM (5 Dakika):
+
+1️⃣  Dosyaları sunucuya yükle
+    → ZIP ile veya Git ile
+
+2️⃣  Kurulumu başlat
+    $ chmod +x setup.sh
+    $ ./setup.sh
+
+3️⃣  İlk taramayı başlat
+    $ chmod +x quick-start.sh
+    $ ./quick-start.sh
+
+═══════════════════════════════════════════════════════════
+
+🔑 GEREKLİ API KEYLER:
+
+1. GitHub AI Models Token
+   → https://github.com/marketplace/models
+   
+2. Telegram Bot Token
+   → Telegram'da @BotFather
+   → /newbot komutu
+   
+3. Telegram Chat ID
+   → Sizinki: 6532122431
+
+═══════════════════════════════════════════════════════════
+
+📚 DÖKÜMANTASYON:
+
+⭐ HIZLI-BASLANGIC.md  ← BURADAN BAŞLA
+⭐ STRATEGY.md         ← CVE BULMA SIRLARI
+⭐ INDEX.md            ← TÜM DOSYALAR
+
+Diğer dosyalar:
+• README.md           → Genel bilgi
+• KULLANIM.md         → Detaylı kılavuz
+• OPTIMIZATION.md     → Filtreleme ayarları
+• TRANSFER.md         → Dosya aktarma
+
+═══════════════════════════════════════════════════════════
+
+🎯 ÖZELLİKLER:
+
+✅ Az bilinen, eski pluginleri hedefler
+✅ En son versiyonu otomatik indirir
+✅ AI ile derin kod analizi
+✅ Telegram'dan anında bildirim
+✅ Telegram BOT (iki yönlü iletişim!) 🤖
+✅ Zafiyet bulana kadar DEVAM EDER
+✅ Zafiyet bulunanları saklar, diğerlerini siler
+✅ Aynı plugin'i tekrar taramaz
+✅ 1.5GB RAM ile çalışır
+
+═══════════════════════════════════════════════════════════
+
+🚀 STRATEJİLER:
+
+1. Zombi Pluginler      → En etkili (%15 başarı)
+2. Güvenlik Pluginleri  → İronik ama gerçek
+3. Dosya Yükleme        → Kritik zafiyetler
+4. E-Ticaret & Ödeme    → Yüksek değer
+5. Admin Panel          → Tam kontrol
+6. Form Pluginleri      → SQL Injection
+
+═══════════════════════════════════════════════════════════
+
+⚡ HIZLI KOMUTLAR:
+
+# Kurulum
+./setup.sh
+
+# API test
+python3 test-config.py
+
+# Telegram Bot'u başlat (arka planda)
+./start-bot.sh
+
+# Tarama (menü)
+./quick-start.sh
+
+# Tarama (direkt - zafiyet bulana kadar!)
+source venv/bin/activate
+python3 scanner.py
+
+# Bot'a Telegram'dan komut gönder:
+/start   - Bot'u başlat
+/stats   - İstatistikler
+/cvss    - CVSS skoru sorgula
+/latest  - Son zafiyet
+/help    - Komutlar
+
+# Bot'u durdur
+./stop-bot.sh
+
+# İstatistikler
+cat scanned_plugins.json
+
+# Log izle
+tail -f logs/scanner.log
+tail -f logs/telegram_bot.log
+
+═══════════════════════════════════════════════════════════
+
+📊 BEKLENTİLER:
+
+Haftalık:   35 plugin tara → 2-5 potansiyel zafiyet
+Aylık:      150 plugin → 10+ zafiyet → 2-3 doğrulanmış
+Yıllık:     🎯 5-10 CVE!
+
+═══════════════════════════════════════════════════════════
+
+⚠️  ÖNEMLİ UYARILAR:
+
+1. Sadece eğitim ve araştırma amaçlı kullanın
+2. Bulduğunuz zafiyetleri önce geliştiriciye bildirin
+3. 90 gün bekleyin (responsible disclosure)
+4. CVE başvurusu: https://cveform.mitre.org/
+5. Yasal sınırlar içinde kalın
+
+═══════════════════════════════════════════════════════════
+
+🆘 SORUN MU YAŞIYORSUNUZ?
+
+1. HIZLI-BASLANGIC.md → Adım adım kılavuz
+2. KULLANIM.md → Sorun giderme
+3. test-config.py → API kontrol
+
+═══════════════════════════════════════════════════════════
+
+🎉 İYİ AVLAR! İLK CVE'NİZ BU SİSTEMLE GELECEK!
+
+═══════════════════════════════════════════════════════════
