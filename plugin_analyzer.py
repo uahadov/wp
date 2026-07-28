@@ -82,61 +82,120 @@ class PluginAnalyzer:
             for page in range(1, 6):  # 5 sayfa tara (her sayfa 100 plugin)
                 print(f"📄 Sayfa {page} taranıyor...")
                 
-                response = requests.get(
-                    f"{config.WORDPRESS_API}",
-                    params={
-                        "action": "query_plugins",
-                        "request[per_page]": 100,
-                        "request[page]": page,
-                        "request[browse]": "updated"  # Son güncellenen (eski olanları bul)
-                    },
-                    timeout=30
-                )
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    all_plugins.extend(data.get("plugins", []))
+                try:
+                    response = requests.get(
+                        f"{config.WORDPRESS_API}",
+                        params={
+                            "action": "query_plugins",
+                            "request[per_page]": 100,
+                            "request[page]": page,
+                            "request[browse]": "updated"  # Son güncellenen (eski olanları bul)
+                        },
+                        timeout=30
+                    )
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        plugins = data.get("plugins", [])
+                        if plugins:
+                            all_plugins.extend(plugins)
+                            print(f"   ✓ {len(plugins)} plugin alındı")
+                        else:
+                            print(f"   ⚠️  Sayfa {page} boş")
+                            break
+                    else:
+                        print(f"   ❌ HTTP {response.status_code}")
+                        break
+                        
+                except Exception as e:
+                    print(f"   ❌ Sayfa {page} hatası: {e}")
+                    break
+            
+            if not all_plugins:
+                print("❌ Hiç plugin alınamadı!")
+                print("⚠️  WordPress API'de sorun olabilir")
+                print("🔄 30 saniye sonra tekrar deneyin...")
+                return []
             
             print(f"✅ Toplam {len(all_plugins)} plugin bulundu")
             print(f"🔍 Filtreleme yapılıyor...\n")
             
             # Filtreleme yap
             for plugin in all_plugins:
-                slug = plugin.get("slug")
-                version = plugin.get("version")
-                active_installs = plugin.get("active_installs", 0)
-                rating = plugin.get("rating", 0)
-                last_updated = plugin.get("last_updated", "")
-                
-                # Daha önce tarandı mı kontrol et
-                if self.is_already_scanned(slug, version):
+                try:
+                    slug = plugin.get("slug", "")
+                    version = plugin.get("version", "1.0.0")
+                    active_installs = int(plugin.get("active_installs", 0))
+                    rating = float(plugin.get("rating", 0))
+                    last_updated = plugin.get("last_updated", "")
+                    
+                    # Boş slug atla
+                    if not slug:
+                        continue
+                    
+                    # Daha önce tarandı mı kontrol et
+                    if self.is_already_scanned(slug, version):
+                        continue
+                    
+                    # Aktif kurulum filtresi
+                    if active_installs > config.FILTER_CRITERIA["max_active_installs"]:
+                        continue
+                    if active_installs < config.FILTER_CRITERIA["min_active_installs"]:
+                        continue
+                    
+                    # Rating filtresi (0 ise kabul et)
+                    if rating > 0 and rating < config.FILTER_CRITERIA["min_rating"]:
+                        continue
+                    
+                    # Güncelleme tarihi filtresi
+                    if last_updated:
+                        months_since_update = self.calculate_months_since_update(last_updated)
+                        if months_since_update < config.FILTER_CRITERIA["min_months_since_update"]:
+                            continue
+                        if months_since_update > config.FILTER_CRITERIA["max_months_since_update"]:
+                            continue
+                    else:
+                        months_since_update = 12  # Varsayılan
+                    
+                    # Filtreyi geçti!
+                    plugin_info = {
+                        "name": plugin.get("name", slug),
+                        "slug": slug,
+                        "version": version,
+                        "download_link": plugin.get("download_link", ""),
+                        "author": plugin.get("author", "Unknown"),
+                        "rating": rating,
+                        "num_ratings": int(plugin.get("num_ratings", 0)),
+                        "active_installs": active_installs,
+                        "last_updated": last_updated,
+                        "months_since_update": months_since_update,
+                        "categories": plugin.get("categories", {}),
+                        "priority_score": self._calculate_priority_score(plugin, months_since_update)
+                    }
+                    
+                    filtered_plugins.append(plugin_info)
+                    
+                except Exception as e:
+                    # Tek bir plugin hatası taramayı durdurmasın
                     continue
-                
-                # Aktif kurulum filtresi
-                if active_installs > config.FILTER_CRITERIA["max_active_installs"]:
-                    continue
-                if active_installs < config.FILTER_CRITERIA["min_active_installs"]:
-                    continue
-                
-                # Rating filtresi
-                if rating < config.FILTER_CRITERIA["min_rating"]:
-                    continue
-                
-                # Güncelleme tarihi filtresi
-                months_since_update = self.calculate_months_since_update(last_updated)
-                if months_since_update < config.FILTER_CRITERIA["min_months_since_update"]:
-                    continue
-                if months_since_update > config.FILTER_CRITERIA["max_months_since_update"]:
-                    continue
-                
-                # Filtreyi geçti!
-                plugin_info = {
-                    "name": plugin.get("name"),
-                    "slug": slug,
-                    "version": version,
-                    "download_link": plugin.get("download_link"),
-                    "author": plugin.get("author"),
-                    "rating": rating,
+            
+            # Öncelik skoruna göre sırala (en yüksek risk en üstte)
+            filtered_plugins.sort(key=lambda x: x["priority_score"], reverse=True)
+            
+            # İstenen sayıda plugin döndür
+            result = filtered_plugins[:count]
+            
+            if not result:
+                print(f"⚠️  Filtreyi geçen plugin bulunamadı")
+                print(f"💡 İpucu: Filtreleri gevşetin (config.py)")
+                return []
+            
+            print(f"✅ {len(result)} hedef plugin belirlendi")
+            if result:
+                print(f"📊 Ortalama son güncelleme: {sum(p['months_since_update'] for p in result) / len(result):.1f} ay önce")
+            print()
+            
+            return result
                     "num_ratings": plugin.get("num_ratings"),
                     "active_installs": active_installs,
                     "last_updated": last_updated,
