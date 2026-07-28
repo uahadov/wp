@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # WordPress Plugin Vulnerability Scanner
 
 WordPress pluginlerini otomatik olarak tarayan, AI destekli zafiyet analizi yapan ve Telegram üzerinden bildirim gönderen sistem.
@@ -85,3 +86,6 @@ crontab -e
 ## Lisans
 
 MIT License - Eğitim ve araştırma amaçlı
+=======
+# wp
+>>>>>>> aa9328819c0c8ccea0c24db7333cdb8726f5d034

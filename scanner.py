@@ -110,111 +110,111 @@ def main():
         
         # Her plugin için tarama yap
         for idx, plugin in enumerate(plugins, 1):
-        
-        # Belirli sayıda plugin tarandıysa dur
-        if total_scanned >= config.PLUGINS_PER_SCAN:
-            print(f"\n✅ Hedef {config.PLUGINS_PER_SCAN} plugin tarandı, durduruluyor...")
-            break
-        
-        print(f"\n{'='*60}")
-        print(f"[{idx}/{len(plugins)}] 📦 {plugin['name']} v{plugin['version']}")
-        print(f"⭐ Rating: {plugin['rating']}/100 ({plugin['num_ratings']} derecelendirme)")
-        print(f"📊 Active Installs: {plugin['active_installs']:,}")
-        print(f"⏰ Son güncelleme: {plugin['months_since_update']} ay önce")
-        print(f"🎯 Öncelik skoru: {plugin['priority_score']:.1f}")
-        print(f"{'='*60}\n")
-        
-        # Plugin'i indir
-        plugin_path = analyzer.download_plugin(plugin)
-        if not plugin_path:
-            print("⚠️  Plugin indirilemedi, atlanıyor\n")
-            skipped_count += 1
-            continue
-        
-        # PHP dosyalarını tara
-        php_files = analyzer.scan_php_files(plugin_path)
-        print(f"📄 {len(php_files)} PHP dosyası bulundu")
-        
-        if not php_files:
-            analyzer.cleanup(plugin_path)
-            skipped_count += 1
-            # Yine de tarandı olarak işaretle
-            analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
-            continue
-        
-        # Hızlı pattern taraması
-        pattern_findings = analyzer.quick_pattern_scan(php_files)
-        
-        # Şüpheli dosyaları belirle
-        suspicious_files = []
-        for php_file in php_files:
-            # Pattern bulgusu olan dosyaları şüpheli olarak işaretle
-            is_suspicious = False
-            for vuln_type, findings in pattern_findings.items():
-                if any(f["file"] == php_file["path"] for f in findings):
-                    is_suspicious = True
-                    break
             
-            if is_suspicious:
-                suspicious_files.append(php_file)
-        
-        print(f"🔍 {len(suspicious_files)} şüpheli dosya tespit edildi")
-        
-        if suspicious_files:
-            # AI ile derin analiz
-            results = detector.deep_analyze(plugin, suspicious_files)
+            # Belirli sayıda plugin tarandıysa dur
+            if total_scanned >= config.PLUGINS_PER_SCAN:
+                print(f"\n✅ Hedef {config.PLUGINS_PER_SCAN} plugin tarandı, durduruluyor...")
+                break
             
-            # Yüksek güvenirlikli zafiyetleri filtrele
-            results = detector.filter_high_confidence_vulns(results)
+            print(f"\n{'='*60}")
+            print(f"[{idx}/{len(plugins)}] 📦 {plugin['name']} v{plugin['version']}")
+            print(f"⭐ Rating: {plugin['rating']}/100 ({plugin['num_ratings']} derecelendirme)")
+            print(f"📊 Active Installs: {plugin['active_installs']:,}")
+            print(f"⏰ Son güncelleme: {plugin['months_since_update']} ay önce")
+            print(f"🎯 Öncelik skoru: {plugin['priority_score']:.1f}")
+            print(f"{'='*60}\n")
             
-            # Sonuçları kaydet
-            save_results(results, plugin["slug"])
+            # Plugin'i indir
+            plugin_path = analyzer.download_plugin(plugin)
+            if not plugin_path:
+                print("⚠️  Plugin indirilemedi, atlanıyor\n")
+                skipped_count += 1
+                continue
             
-            # Zafiyet var mı kontrol et
-            found_vulns = len(results["vulnerabilities_found"]) > 0
+            # PHP dosyalarını tara
+            php_files = analyzer.scan_php_files(plugin_path)
+            print(f"📄 {len(php_files)} PHP dosyası bulundu")
             
-            # Tarandı olarak işaretle
-            analyzer.mark_as_scanned(plugin["slug"], plugin["version"], found_vulns)
-            
-            # Zafiyet bulunduysa Telegram'a bildir
-            if found_vulns:
-                print(f"\n🎉 {len(results['vulnerabilities_found'])} ZAFIYET BULUNDU!")
-                print("📱 Telegram bildirimi gönderiliyor...")
-                
-                notifier.send_vulnerability_report(results)
-                total_vulns_found += 1
-                
-                # ZAFİYET BULUNDU - ARAMAYA DEVAM ETME!
-                print("\n" + "="*60)
-                print("✅ HEDEF TAMAMLANDI! ZAFİYET BULUNDU!")
-                print("="*60)
-                
-                # Zafiyet bulunan plugin'i SAKLAYALIM (cleanup'a keep=True)
-                analyzer.cleanup(plugin_path, keep=True)
-                
-            else:
-                print("\n✅ Doğrulanabilir zafiyet bulunamadı")
-                
-                # ZAFİYET YOK - PLUGIN DOSYALARINI SİL
+            if not php_files:
                 analyzer.cleanup(plugin_path, keep=False)
-        else:
-            print("✅ Şüpheli kod bulunamadı")
-            # Tarandı olarak işaretle (zafiyet yok)
-            analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
-            # Temizle (zafiyet yok)
-            analyzer.cleanup(plugin_path, keep=False)
+                skipped_count += 1
+                # Yine de tarandı olarak işaretle
+                analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
+                continue
+            
+            # Hızlı pattern taraması
+            pattern_findings = analyzer.quick_pattern_scan(php_files)
+            
+            # Şüpheli dosyaları belirle
+            suspicious_files = []
+            for php_file in php_files:
+                # Pattern bulgusu olan dosyaları şüpheli olarak işaretle
+                is_suspicious = False
+                for vuln_type, findings in pattern_findings.items():
+                    if any(f["file"] == php_file["path"] for f in findings):
+                        is_suspicious = True
+                        break
+                
+                if is_suspicious:
+                    suspicious_files.append(php_file)
+            
+            print(f"🔍 {len(suspicious_files)} şüpheli dosya tespit edildi")
+            
+            if suspicious_files:
+                # AI ile derin analiz
+                results = detector.deep_analyze(plugin, suspicious_files)
+                
+                # Yüksek güvenirlikli zafiyetleri filtrele
+                results = detector.filter_high_confidence_vulns(results)
+                
+                # Sonuçları kaydet
+                save_results(results, plugin["slug"])
+                
+                # Zafiyet var mı kontrol et
+                found_vulns = len(results["vulnerabilities_found"]) > 0
+                
+                # Tarandı olarak işaretle
+                analyzer.mark_as_scanned(plugin["slug"], plugin["version"], found_vulns)
+                
+                # Zafiyet bulunduysa Telegram'a bildir
+                if found_vulns:
+                    print(f"\n🎉 {len(results['vulnerabilities_found'])} ZAFIYET BULUNDU!")
+                    print("📱 Telegram bildirimi gönderiliyor...")
+                    
+                    notifier.send_vulnerability_report(results)
+                    total_vulns_found += 1
+                    
+                    # ZAFİYET BULUNDU - ARAMAYA DEVAM ETME!
+                    print("\n" + "="*60)
+                    print("✅ HEDEF TAMAMLANDI! ZAFİYET BULUNDU!")
+                    print("="*60)
+                    
+                    # Zafiyet bulunan plugin'i SAKLAYALIM (cleanup'a keep=True)
+                    analyzer.cleanup(plugin_path, keep=True)
+                    
+                else:
+                    print("\n✅ Doğrulanabilir zafiyet bulunamadı")
+                    
+                    # ZAFİYET YOK - PLUGIN DOSYALARINI SİL
+                    analyzer.cleanup(plugin_path, keep=False)
+            else:
+                print("✅ Şüpheli kod bulunamadı")
+                # Tarandı olarak işaretle (zafiyet yok)
+                analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
+                # Temizle (zafiyet yok)
+                analyzer.cleanup(plugin_path, keep=False)
+            
+            total_scanned += 1
+            
+            # ZAFİYET BULUNDUYSA DÖNGÜDEN ÇIK
+            if total_vulns_found > 0:
+                break
+            
+            # Rate limiting için bekleme
+            if idx < len(plugins):
+                print("\n⏱️  Sonraki plugin için 5 saniye bekleniyor...")
+                time.sleep(5)
         
-        total_scanned += 1
-        
-        # ZAFİYET BULUNDUYSA DÖNGÜDEN ÇIK
-        if total_vulns_found > 0:
-            break
-        
-        # Rate limiting için bekleme
-        if idx < len(plugins):
-            print("\n⏱️  Sonraki plugin için 5 saniye bekleniyor...")
-            time.sleep(5)
-    
         # ZAFİYET BULUNDUYSA DÖNGÜYÜ KIR
         if total_vulns_found > 0:
             print("\n🎊 ARAMA DURDURULDU - ZAFİYET BULUNDU!")
