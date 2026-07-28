@@ -11,12 +11,6 @@ echo "║                                                            ║"
 echo "╚════════════════════════════════════════════════════════════╝"
 echo ""
 
-# Root kontrolü
-if [ "$EUID" -eq 0 ]; then 
-    echo "⚠️  Bu script'i root olarak çalıştırmayın!"
-    exit 1
-fi
-
 echo "📋 Sistem bilgileri kontrol ediliyor..."
 echo "OS: $(lsb_release -d | cut -f2)"
 echo "RAM: $(free -h | awk '/^Mem:/ {print $2}')"
