@@ -196,27 +196,6 @@ class PluginAnalyzer:
             print()
             
             return result
-                    "num_ratings": plugin.get("num_ratings"),
-                    "active_installs": active_installs,
-                    "last_updated": last_updated,
-                    "months_since_update": months_since_update,
-                    "categories": plugin.get("categories", {}),
-                    "priority_score": self._calculate_priority_score(plugin, months_since_update)
-                }
-                
-                filtered_plugins.append(plugin_info)
-            
-            # Öncelik skoruna göre sırala (en yüksek risk en üstte)
-            filtered_plugins.sort(key=lambda x: x["priority_score"], reverse=True)
-            
-            # İstenen sayıda plugin döndür
-            result = filtered_plugins[:count]
-            
-            print(f"✅ {len(result)} hedef plugin belirlendi")
-            print(f"📊 Ortalama son güncelleme: {sum(p['months_since_update'] for p in result) / len(result):.1f} ay önce")
-            print()
-            
-            return result
             
         except Exception as e:
             print(f"❌ Plugin listesi alınamadı: {e}")
