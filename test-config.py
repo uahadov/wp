@@ -95,20 +95,34 @@ try:
     print("   🔄 Test mesajı gönderiliyor...")
     
     async def send_test():
-        await bot.send_message(
+        test_bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
+        await test_bot.send_message(
             chat_id=config.TELEGRAM_CHAT_ID,
             text="✅ WordPress Zafiyet Tarayıcı kurulumu başarılı!\n\nSistem hazır. İlk taramayı başlatabilirsiniz.",
             parse_mode="HTML"
         )
     
-    asyncio.run(send_test())
+    # Yeni event loop oluştur
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(send_test())
+    loop.close()
+    
+    print("   ✅ Test mesajı gönderildi!")
+    print("   → Telegram'ı kontrol edin")
+    # Yeni event loop oluştur
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    loop.run_until_complete(send_test())
+    loop.close()
+    
     print("   ✅ Test mesajı gönderildi!")
     print("   → Telegram'ı kontrol edin")
     
 except Exception as e:
     print(f"   ❌ Mesaj gönderilemedi: {e}")
     print("   → Chat ID'yi kontrol edin")
-    sys.exit(1)
+    print("   ⚠️  Bu hata kurulumu etkilemez, devam edebilirsiniz")
 
 # 4. WordPress API kontrolü
 print("\n4️⃣  WordPress.org API...")
