@@ -79,7 +79,7 @@ if [ ! -f ".env" ]; then
         cat <<EOT > .env
 GITHUB_TOKEN=your_github_token_here
 TELEGRAM_BOT_TOKEN=your_telegram_bot_token_here
-TELEGRAM_CHAT_ID=6532122431
+TELEGRAM_CHAT_ID=your_chat_id_here
 GITHUB_MODEL=gpt-4o
 PLUGINS_PER_SCAN=5
 EOT
