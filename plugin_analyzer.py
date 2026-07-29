@@ -306,9 +306,15 @@ class PluginAnalyzer:
         try:
             for php_file in plugin_path.rglob("*.php"):
                 if php_file.is_file():
-                    # Vendor ve 3. parti kütüphaneleri atla (sadece eklentinin kendi koduna odaklan)
                     rel_path_str = str(php_file.relative_to(plugin_path)).replace("\\", "/")
-                    ignore_dirs = ["vendor/", "node_modules/", "libs/", "libraries/"]
+                    file_name_lower = php_file.name.lower()
+
+                    # uninstall.php ve boş index.php dosyalarını atla
+                    if file_name_lower in ["uninstall.php", "index.php"]:
+                        continue
+
+                    # Vendor ve 3. parti kütüphaneleri atla
+                    ignore_dirs = ["vendor/", "node_modules/", "libs/", "libraries/", "third-party/"]
                     if any(dir_name in rel_path_str.lower() for dir_name in ignore_dirs):
                         continue
 

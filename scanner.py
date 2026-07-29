@@ -176,17 +176,25 @@ def main():
                 # Tarandı olarak işaretle
                 analyzer.mark_as_scanned(plugin["slug"], plugin["version"], found_vulns)
                 
-                # Zafiyet bulunduysa Telegram'a bildir
+                # Zafiyet bulunduysa Telegram'a bildir ve detayları ekrana yaz
                 if found_vulns:
-                    print(f"\n🎉 {len(results['vulnerabilities_found'])} ZAFIYET BULUNDU!")
-                    print("📱 Telegram bildirimi gönderiliyor...")
+                    print(f"\n🔥 {len(results['vulnerabilities_found'])} GERÇEK VE DOĞRULANMIŞ ZAFIYET BULUNDU!")
+                    print("=" * 60)
+                    for idx, v in enumerate(results["vulnerabilities_found"], 1):
+                        print(f"[{idx}] Tür: {v.get('type')} | Önem: {v.get('severity')} | CVSS: {v.get('cvss_score')}")
+                        print(f"    Konum: {v.get('location', v.get('file'))}")
+                        print(f"    Zafiyetli Kod: {v.get('vulnerable_code', 'N/A')}")
+                        print(f"    PoC / Test Komutu: {v.get('poc_command', 'N/A')}")
+                        print(f"    Açıklama: {v.get('description', 'N/A')[:150]}...")
+                        print("-" * 60)
                     
+                    print("📱 Detaylı Telegram bildirimi gönderiliyor...")
                     notifier.send_vulnerability_report(results)
                     total_vulns_found += 1
                     
                     # ZAFİYET BULUNDU - ARAMAYA DEVAM ETME!
                     print("\n" + "="*60)
-                    print("✅ HEDEF TAMAMLANDI! ZAFİYET BULUNDU!")
+                    print("✅ HEDEF TAMAMLANDI! GERÇEK ZAFIYET BULUNDU!")
                     print("="*60)
                     
                     # Zafiyet bulunan plugin'i SAKLAYALIM (cleanup'a keep=True)

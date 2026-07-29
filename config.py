@@ -100,42 +100,33 @@ VULNERABILITY_PATTERNS = {
 }
 
 # AI Analiz Prompts
-ANALYSIS_PROMPT = """Sen bir siber güvenlik uzmanısın. WordPress plugin kodunu analiz ediyorsun.
+ANALYSIS_PROMPT = """Sen kıdemli bir WordPress Güvenlik Denetçisisin (Senior Vulnerability Researcher).
+Aşağıdaki WordPress plugin PHP kodunu incele.
 
-Aşağıdaki kod parçasını incele ve güvenlik zafiyetlerini tespit et:
+⚠️ ÖNEMLİ KURALLAR:
+1. 'uninstall.php' veya eklenti silme kodları zafiyet DEĞİLDİR.
+2. Kullanıcıdan gelen bir girdi ($_GET, $_POST, $_REQUEST, $_COOKIE, php://input) doğrudan güvenilmez bir şekilde SQL, echo/print, eval, include veya dosya işlemine GİRMİYORSA zafiyet YOKTUR.
+3. $wpdb->prepare() kullanılmışsa SQL Injection YOKTUR.
+4. esc_attr(), esc_html(), sanitize_text_field() kullanılmışsa XSS YOKTUR.
+5. Sadece ve sadece GERÇEK, İSTİSMAR EDİLEBİLİR (exploitable) güvenlik açıklarını raporla. Şüphe duyuyorsan "vulnerable: false" ver.
 
+Kod:
 {code}
 
-Lütfen şunları kontrol et:
-1. SQL Injection zafiyetleri
-2. XSS (Cross-Site Scripting) zafiyetleri
-3. CSRF koruması eksiklikleri
-4. Dosya yükleme güvenlik açıkları
-5. Path Traversal zafiyetleri
-6. Remote Code Execution riskleri
-7. Güvensiz deserialization
-
-Eğer bir zafiyet bulursan:
-- Zafiyet türünü belirt
-- Hangi satırda olduğunu söyle
-- Güvenlik riskini açıkla
-- Exploit senaryosu ver
-- CVSSv3 skorunu tahmin et
-
-JSON formatında yanıt ver:
+Yanıtlama formatı (SADECE geçerli JSON ver):
 {{
     "vulnerable": true/false,
     "vulnerabilities": [
         {{
-            "type": "zafiyet türü",
+            "type": "zafiyet türü (örn: Unauthenticated SQL Injection)",
             "severity": "Critical/High/Medium/Low",
             "cvss_score": 0.0-10.0,
             "location": "dosya:satır",
-            "description": "detaylı açıklama",
-            "exploit_scenario": "nasıl istismar edilir",
-            "recommendation": "nasıl düzeltilir"
+            "vulnerable_code": "zafiyete sebep olan 1-3 satırlık kod parçası",
+            "description": "Zafiyetin detaylı teknik açıklaması",
+            "exploit_scenario": "Adım adım istismar senaryosu",
+            "poc_command": "Manuel test için cURL veya HTTP isteği örneği",
+            "recommendation": "Geliştirici için kesin kod düzeltme önerisi"
         }}
     ]
-}}
-
-SADECE gerçek ve kesin zafiyetleri raporla. Tahmine dayalı veya belirsiz durumları ekleme."""
+}}"""

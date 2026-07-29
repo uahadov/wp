@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """
 Telegram bildirim modülü
-Bulunan zafiyetleri Telegram üzerinden bildirir
+Bulunan zafiyetleri Telegram üzerinden detaylı şekilde bildirir
 """
 
 import asyncio
@@ -13,140 +13,143 @@ import config
 
 class TelegramNotifier:
     def __init__(self):
-        self.bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
+        self.token = config.TELEGRAM_BOT_TOKEN
         self.chat_id = config.TELEGRAM_CHAT_ID
 
-    async def send_message(self, message: str):
-        """Telegram'a mesaj gönder"""
+    async def _send_async_message(self, message: str):
+        """Telegram'a mesaj gönder (Her çağrıda temiz Bot instance)"""
+        bot = Bot(token=self.token)
         try:
             # Mesaj çok uzunsa böl (Telegram limiti 4096 karakter)
             if len(message) > 4096:
-                chunks = [message[i:i+4096] for i in range(0, len(message), 4096)]
+                chunks = [message[i:i+4090] for i in range(0, len(message), 4090)]
                 for chunk in chunks:
-                    await self.bot.send_message(
+                    await bot.send_message(
                         chat_id=self.chat_id,
                         text=chunk,
-                        parse_mode="HTML"
+                        parse_mode="HTML",
+                        disable_web_page_preview=True
                     )
-                    await asyncio.sleep(1)
+                    await asyncio.sleep(0.5)
             else:
-                await self.bot.send_message(
+                await bot.send_message(
                     chat_id=self.chat_id,
                     text=message,
-                    parse_mode="HTML"
+                    parse_mode="HTML",
+                    disable_web_page_preview=True
                 )
             return True
         except TelegramError as e:
-            print(f"\u274c Telegram gönderme hatası: {e}")
+            print(f"❌ Telegram gönderme hatası: {e}")
+            return False
+        finally:
+            await bot.shutdown()
+
+    def send_message(self, message: str) -> bool:
+        """Senkron olarak async mesaj göndericiyi tetikle"""
+        try:
+            return asyncio.run(self._send_async_message(message))
+        except Exception as e:
+            print(f"❌ Telegram mesaj hatası: {e}")
             return False
 
     def format_vulnerability_report(self, results: Dict) -> str:
-        """Zafiyet raporunu Telegram mesajı olarak formatla"""
+        """Zafiyet raporunu Telegram mesajı olarak ÇOK DETAYLI formatla"""
 
-        if not results["vulnerabilities_found"]:
+        slug = results.get("plugin_slug", "")
+        download_url = f"https://downloads.wordpress.org/plugin/{slug}.{results.get('plugin_version', '')}.zip"
+
+        if not results.get("vulnerabilities_found"):
             message = (
-                "\U0001f50d <b>WordPress Plugin Taramas\u0131</b>\n\n"
-                f"\U0001f4e6 <b>Plugin:</b> {results['plugin_name']}\n"
-                f"\U0001f4cc <b>Versiyon:</b> {results['plugin_version']}\n"
-                f"\U0001f550 <b>Tarih:</b> {results['scan_timestamp']}\n\n"
-                f"\u2705 <b>Sonu\u00e7:</b> Zafiyet bulunamad\u0131\n"
-                f"\U0001f4ca {results['total_files_analyzed']} dosya analiz edildi"
+                "🔍 <b>WordPress Plugin Taraması</b>\n\n"
+                f"📦 <b>Plugin:</b> {results['plugin_name']}\n"
+                f"📌 <b>Versiyon:</b> {results['plugin_version']}\n"
+                f"🕐 <b>Tarih:</b> {results['scan_timestamp']}\n\n"
+                f"✅ <b>Sonuç:</b> Doğrulanabilir Zafiyet Bulunamadı\n"
+                f"📊 {results['total_files_analyzed']} dosya analiz edildi"
             )
             return message
 
-        # Zafiyet bulundu!
         summary = results["summary"]
 
         message = (
-            "\U0001f6a8 <b>ZAF\u0130YET BULUNDU!</b> \U0001f6a8\n\n"
-            f"\U0001f4e6 <b>Plugin:</b> {results['plugin_name']}\n"
-            f"\U0001f4cc <b>Versiyon:</b> {results['plugin_version']}\n"
-            f"\U0001f550 <b>Tarih:</b> {results['scan_timestamp']}\n\n"
-            f"\U0001f4ca <b>\u00d6zet:</b>\n"
-            f"\u2022 Toplam Zafiyet: {summary['total_vulnerabilities']}\n"
+            "🚨 <b>KRİTİK ZAFIYET BULUNDU!</b> 🚨\n\n"
+            f"📦 <b>Plugin:</b> {results['plugin_name']}\n"
+            f"📌 <b>Versiyon:</b> {results['plugin_version']}\n"
+            f"🔗 <b>İndirme Linki:</b> {download_url}\n"
+            f"🕐 <b>Tarih:</b> {results['scan_timestamp']}\n\n"
+            f"📊 <b>Toplam Doğrulanmış Zafiyet:</b> {summary['total_vulnerabilities']}\n"
         )
 
-        # Severity bilgisi
         if "by_severity" in summary:
-            message += "\n<b>\u00d6nem Da\u011f\u0131l\u0131m\u0131:</b>\n"
+            message += "\n<b>Önem Dağılımı:</b>\n"
             for severity, count in summary["by_severity"].items():
-                if severity == "Critical":
-                    sev_emoji = "\U0001f534"
-                elif severity == "High":
-                    sev_emoji = "\U0001f7e0"
-                elif severity == "Medium":
-                    sev_emoji = "\U0001f7e1"
-                else:
-                    sev_emoji = "\U0001f7e2"
+                sev_emoji = "🔴" if severity == "Critical" else "🟠" if severity == "High" else "🟡" if severity == "Medium" else "🟢"
                 message += f"{sev_emoji} {severity}: {count}\n"
 
-        message += "\n" + "=" * 40 + "\n\n"
+        message += "\n" + "=" * 35 + "\n\n"
 
-        # Her zafiyet için detay
+        # Her zafiyet için DETAYLI açıklama
         for idx, vuln in enumerate(results["vulnerabilities_found"], 1):
-            sev = vuln.get("severity", "Low")
-            if sev == "Critical":
-                severity_emoji = "\U0001f534"
-            elif sev == "High":
-                severity_emoji = "\U0001f7e0"
-            elif sev == "Medium":
-                severity_emoji = "\U0001f7e1"
-            else:
-                severity_emoji = "\U0001f7e2"
-
-            desc = vuln.get("description", "")[:200]
-            exploit = vuln.get("exploit_scenario", "Belirtilmemi\u015f")[:300]
-            rec = vuln.get("recommendation", "Belirtilmemi\u015f")[:200]
-            file_loc = vuln.get("file", vuln.get("location", "N/A"))
+            sev = vuln.get("severity", "High")
+            severity_emoji = "🔴" if sev == "Critical" else "🟠" if sev == "High" else "🟡"
+            cvss = vuln.get("cvss_score", "N/A")
+            location = vuln.get("location", vuln.get("file", "N/A"))
+            vulnerable_code = vuln.get("vulnerable_code", "Belirtilmemiş")
+            desc = vuln.get("description", "Açıklama yok")
+            exploit = vuln.get("exploit_scenario", "Senaryo yok")
+            poc = vuln.get("poc_command", "cURL/HTTP isteği yok")
+            rec = vuln.get("recommendation", "Öneri yok")
 
             message += (
                 f"<b>{idx}. {vuln['type']}</b> {severity_emoji}\n\n"
-                f"<b>\u00d6nem:</b> {sev} (CVSS: {vuln.get('cvss_score', 'N/A')})\n"
-                f"<b>Dosya:</b> {file_loc}\n"
-                f"<b>A\u00e7\u0131klama:</b> {desc}...\n\n"
-                f"<b>Exploit Senaryosu:</b>\n{exploit}...\n\n"
-                f"<b>\u00c7\u00f6z\u00fcm \u00d6nerisi:</b>\n{rec}...\n\n"
-                + "-" * 40 + "\n\n"
+                f"🔥 <b>CVSS Skor:</b> {cvss} ({sev})\n"
+                f"📍 <b>Konum:</b> <code>{location}</code>\n\n"
+                f"💻 <b>Zafiyetli Kod Parçası:</b>\n"
+                f"<code>{vulnerable_code[:300]}</code>\n\n"
+                f"📝 <b>Açıklama:</b>\n{desc}\n\n"
+                f"🎯 <b>Exploit Senaryosu:</b>\n{exploit}\n\n"
+                f"🧪 <b>Manuel Test Komutu (PoC):</b>\n"
+                f"<code>{poc}</code>\n\n"
+                f"🛠️ <b>Çözüm Önerisi:</b>\n{rec}\n\n"
+                + "-" * 35 + "\n\n"
             )
 
-        # CVE başvuru bilgisi
         message += (
-            "\n<b>\U0001f4cc Sonraki Ad\u0131mlar:</b>\n"
-            "1. Plugin geli\u015ftiricisine \u00f6zel olarak bildir\n"
-            "2. 90 g\u00fcn bekle (Responsible Disclosure)\n"
-            "3. CVE ba\u015fvurusu yap: https://cveform.mitre.org/\n\n"
-            "<b>\u26a0\ufe0f \u00d6NEML\u0130:</b> Bu bilgileri sorumlu bir \u015fekilde kullan\u0131n!"
+            "<b>📌 Sonraki Adımlar:</b>\n"
+            "1. Raporu local <code>results/</code> klasöründen doğrulayın.\n"
+            "2. Manuel cURL PoC komutu ile zafiyeti test edin.\n"
+            "3. Plugin geliştiricisine özel bildirim yapın (Responsible Disclosure)."
         )
 
         return message
 
-    def send_vulnerability_report(self, results: Dict):
-        """Zafiyet raporunu gönder (Python 3.12 uyumlu asyncio.run)"""
+    def send_vulnerability_report(self, results: Dict) -> bool:
+        """Zafiyet raporunu gönder"""
         message = self.format_vulnerability_report(results)
-        success = asyncio.run(self.send_message(message))
+        success = self.send_message(message)
         if success:
-            print("\u2705 Telegram bildirimi gönderildi")
+            print("✅ Telegram bildirimi detaylı olarak gönderildi")
         else:
-            print("\u274c Telegram bildirimi gönderilemedi")
+            print("❌ Telegram bildirimi gönderilemedi")
         return success
 
     def send_scan_start(self, plugin_count: int):
         """Tarama başlangıç bildirimi"""
         message = (
-            "\U0001f504 <b>WordPress Zafiyet Tamas\u0131 Ba\u015flad\u0131</b>\n\n"
-            f"\U0001f4e6 {plugin_count} plugin analiz edilecek\n"
-            f"\u23f1\ufe0f Tahmini s\u00fcre: {plugin_count * 2} dakika\n\n"
-            "Bulgular i\u00e7in beklemede..."
+            "🔄 <b>WordPress Zafiyet Taraması Başladı</b>\n\n"
+            f"📦 {plugin_count} hedef plugin analiz edilecek\n"
+            "Bulgular bekleniyor..."
         )
-        asyncio.run(self.send_message(message))
+        self.send_message(message)
 
     def send_scan_complete(self, total_plugins: int, vulns_found: int):
         """Tarama tamamlanma bildirimi"""
-        result_text = "\U0001f389 Ba\u015far\u0131lar!" if vulns_found > 0 else "Sonraki taramaya haz\u0131r."
+        result_text = "🎉 Doğrulanmış zafiyet(ler) bulundu!" if vulns_found > 0 else "Tüm tarama tamamlandı."
         message = (
-            "\u2705 <b>Tarama Tamamland\u0131</b>\n\n"
-            f"\U0001f4e6 Analiz edilen plugin: {total_plugins}\n"
-            f"\U0001f6a8 Zafiyet bulunan plugin: {vulns_found}\n\n"
+            "✅ <b>Tarama Tamamlandı</b>\n\n"
+            f"📦 Analiz Edilen: {total_plugins}\n"
+            f"🚨 Zafiyet Bulunan: {vulns_found}\n\n"
             f"{result_text}"
         )
-        asyncio.run(self.send_message(message))
+        self.send_message(message)
