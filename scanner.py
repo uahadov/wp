@@ -13,6 +13,8 @@ import sys
 import json
 import time
 import logging
+import subprocess
+import atexit
 from pathlib import Path
 from datetime import datetime
 
@@ -20,6 +22,41 @@ import config
 from plugin_analyzer import PluginAnalyzer
 from vuln_detector import VulnerabilityDetector
 from telegram_notifier import TelegramNotifier
+
+# Arka plan bot süreci
+bot_process = None
+
+
+def start_telegram_bot():
+    """Telegram botunu otomatik arka plan süreci olarak başlat"""
+    global bot_process
+    if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
+        print("⚠️ Telegram bot token tanımlanmadığı için bot başlatılamadı.")
+        return
+
+    try:
+        bot_script = Path(__file__).parent / "telegram_bot.py"
+        if bot_script.exists():
+            bot_process = subprocess.Popen([sys.executable, str(bot_script)])
+            print("🤖 Telegram Bot & AI Asistanı arka planda otomatik başlatıldı!")
+    except Exception as e:
+        print(f"⚠️ Telegram botu başlatılırken hata oluştu: {e}")
+
+
+def stop_telegram_bot():
+    """Script kapandığında Telegram bot sürecini güvenle sonlandır"""
+    global bot_process
+    if bot_process and bot_process.poll() is None:
+        print("\n🛑 Telegram Botu kapatılıyor...")
+        try:
+            bot_process.terminate()
+            bot_process.wait(timeout=3)
+        except Exception:
+            bot_process.kill()
+
+
+# Script sonlandığında botu temizle
+atexit.register(stop_telegram_bot)
 
 # Windows console encoding guard
 if sys.platform == "win32":
@@ -112,6 +149,9 @@ def main():
     # Yapılandırmayı kontrol et
     if not validate_config():
         sys.exit(1)
+
+    # Telegram Botunu Arka Planda Başlat
+    start_telegram_bot()
 
     # Modülleri başlat
     try:

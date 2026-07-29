@@ -326,7 +326,10 @@ def start_bot():
     print(f"📱 Chat ID: {config.TELEGRAM_CHAT_ID}")
     print("✅ Bot Hazır! Telegram'dan /m <sorunuz> yazarak AI ile konuşabilirsiniz.")
 
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
+    try:
+        application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)
+    except Exception as e:
+        print(f"⚠️ Telegram bot çalışma hatası veya çakışması: {e}")
 
 
 if __name__ == "__main__":
