@@ -88,8 +88,8 @@ class PluginAnalyzer:
 
         # Farklı browse kategorileri: sadece "popular" değil çeşitlendiriyoruz
         browse_types = ["popular", "new", "updated"]
-        max_page = 25
-        sample_size = min(5, max_page)
+        max_page = 100     # 25'ten 100'e çıkarıldı — daha fazla havuz
+        sample_size = 8    # 5'ten 8'e çıkarıldı — batch başına daha fazla plugin
         pages_to_scan = random.sample(range(1, max_page + 1), sample_size)
 
         for page in pages_to_scan:

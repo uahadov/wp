@@ -121,7 +121,7 @@ def main():
     print()
 
     # İstatistikler
-    total_scanned = 0
+    total_scanned = 0      # Tüm batch'lerde toplam taranan
     total_vulns_found = 0
     skipped_count = 0
     batch_number = 1
@@ -140,6 +140,9 @@ def main():
             time.sleep(30)
             continue
 
+        # Bu batch'teki tarama sayacı — her batch başında sıfır
+        batch_scanned = 0
+
         # İlk batch'te bildirim gönder
         if batch_number == 1:
             notifier.send_scan_start(len(plugins))
@@ -147,9 +150,9 @@ def main():
         # Her plugin için tarama yap
         for idx, plugin in enumerate(plugins, 1):
 
-            # Belirli sayıda plugin tarandıysa dur
-            if total_scanned >= config.PLUGINS_PER_SCAN:
-                print(f"\n✅ Hedef {config.PLUGINS_PER_SCAN} plugin tarandı, durduruluyor...")
+            # Bu batch'te belirli sayıda plugin tarandıysa dur
+            if batch_scanned >= config.PLUGINS_PER_SCAN:
+                print(f"\n✅ Bu batch'te {config.PLUGINS_PER_SCAN} plugin tarandı, durduruluyor...")
                 break
 
             print(f"\n{'='*60}")
@@ -177,6 +180,7 @@ def main():
                 # Tarandı olarak işaretle (PHP dosyası yok = zafiyet yok)
                 analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
                 total_scanned += 1
+                batch_scanned += 1
                 continue
 
             # Hızlı pattern taraması
@@ -241,13 +245,14 @@ def main():
                 analyzer.cleanup(plugin_path, keep=False)
 
             total_scanned += 1
+            batch_scanned += 1
 
             # ZAFİYET BULUNDUYSA DÖNGÜDEN ÇIK
             if total_vulns_found > 0:
                 break
 
             # Rate limiting için bekleme (son plugin değilse)
-            if idx < len(plugins) and total_scanned < config.PLUGINS_PER_SCAN:
+            if idx < len(plugins) and batch_scanned < config.PLUGINS_PER_SCAN:
                 print("\n⏱️  Sonraki plugin için 5 saniye bekleniyor...")
                 time.sleep(5)
 
