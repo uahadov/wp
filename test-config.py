@@ -5,10 +5,13 @@ API keylerini ve Telegram botunu test eder
 """
 
 import sys
+import os
 import requests
-from openai import OpenAI
-from telegram import Bot
-import asyncio
+from pathlib import Path
+from dotenv import load_dotenv
+
+# .env dosyasını yükle
+load_dotenv()
 
 print("=" * 60)
 print("WordPress Zafiyet Tarayıcı - Yapılandırma Testi")
@@ -29,18 +32,20 @@ print("-" * 60)
 
 # 1. GitHub Token kontrolü
 print("\n1️⃣  GitHub AI Models Token...")
-if config.GITHUB_TOKEN == "your_github_token_here":
+if not config.GITHUB_TOKEN or config.GITHUB_TOKEN == "your_github_token_here":
     print("   ❌ Token ayarlanmamış!")
-    print("   → config.py dosyasını düzenleyin")
+    print("   → .env veya config.py dosyasını düzenleyin")
     sys.exit(1)
 else:
-    print(f"   ✅ Token bulundu: {config.GITHUB_TOKEN[:10]}...")
+    token_display = config.GITHUB_TOKEN[:10] + "..." if len(config.GITHUB_TOKEN) > 10 else config.GITHUB_TOKEN
+    print(f"   ✅ Token bulundu: {token_display}")
     
     # API testi
     try:
         print("   🔄 API bağlantısı test ediliyor...")
+        from openai import OpenAI
         client = OpenAI(
-            base_url="https://models.inference.ai.azure.com",
+            base_url=config.GITHUB_API_BASE,
             api_key=config.GITHUB_TOKEN,
         )
         
@@ -62,19 +67,22 @@ else:
 
 # 2. Telegram Bot kontrolü
 print("\n2️⃣  Telegram Bot Token...")
-if config.TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
+if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
     print("   ❌ Bot token ayarlanmamış!")
-    print("   → @BotFather'dan token alın")
+    print("   → .env dosyasında TELEGRAM_BOT_TOKEN ayarlayın")
     sys.exit(1)
 else:
-    print(f"   ✅ Token bulundu: {config.TELEGRAM_BOT_TOKEN[:10]}...")
+    bot_token_display = config.TELEGRAM_BOT_TOKEN[:10] + "..." if len(config.TELEGRAM_BOT_TOKEN) > 10 else config.TELEGRAM_BOT_TOKEN
+    print(f"   ✅ Token bulundu: {bot_token_display}")
     
     # Bot testi
     try:
         print("   🔄 Bot bağlantısı test ediliyor...")
-        bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
+        import asyncio
+        from telegram import Bot
         
         async def test_bot():
+            bot = Bot(token=config.TELEGRAM_BOT_TOKEN)
             bot_info = await bot.get_me()
             return bot_info
         
@@ -102,19 +110,7 @@ try:
             parse_mode="HTML"
         )
     
-    # Yeni event loop oluştur
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(send_test())
-    loop.close()
-    
-    print("   ✅ Test mesajı gönderildi!")
-    print("   → Telegram'ı kontrol edin")
-    # Yeni event loop oluştur
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(send_test())
-    loop.close()
+    asyncio.run(send_test())
     
     print("   ✅ Test mesajı gönderildi!")
     print("   → Telegram'ı kontrol edin")
@@ -156,9 +152,6 @@ except Exception as e:
 
 # 5. Dizin kontrolleri
 print("\n5️⃣  Dizin Yapısı...")
-import os
-from pathlib import Path
-
 dirs = ["work", "results", "logs"]
 for d in dirs:
     p = Path(d)
@@ -187,10 +180,4 @@ print()
 print("✅ Sistem hazır. Taramayı başlatabilirsiniz:")
 print()
 print("   python3 scanner.py")
-print()
-print("   veya")
-print()
-print("   ./quick-start.sh")
-print()
-print("⚠️  Lütfen etik kurallara uygun kullanın!")
 print()
