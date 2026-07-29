@@ -22,6 +22,17 @@ class VulnerabilityDetector:
         )
         self.model = config.GITHUB_MODEL
 
+        # Secondary AI Validator (Google Gemini 2.5/3.5 Flash)
+        self.gemini_client = None
+        if config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_api_key_here":
+            try:
+                self.gemini_client = OpenAI(
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                    api_key=config.GEMINI_API_KEY,
+                )
+            except Exception as e:
+                logger.warning(f"Gemini API istemcisi başlatılamadı: {e}")
+
     def analyze_code_with_ai(self, code_snippet: str, file_path: str) -> Optional[Dict]:
         """AI ile PHP kod analizi yap (Otomatik Retry ve Kesin JSON Parse)"""
         print(f"🤖 AI analizi: {file_path}")
@@ -236,14 +247,72 @@ class VulnerabilityDetector:
             print(f"⚠️ Zafiyet doğrulama hatası: {e}")
             return False
 
+    def verify_vulnerability_with_gemini(self, vuln: Dict) -> bool:
+        """2. Aşama Hakem: Google Gemini 2.5/3.5 Flash ile zafiyeti sert bir Pentester gözüyle doğrula"""
+        if not self.gemini_client:
+            return True
+
+        print(f"⚖️ Gemini AI Hakemi zafiyeti inceliyor: {vuln.get('type', 'Unknown')}...")
+
+        prompt = (
+            "Sen Kıdemli Siber Güvenlik Baş Denetçisi ve Pentester'sın.\n"
+            "İlk AI tarayıcımız (GPT-4o) bir WordPress eklentisinde aşağıdaki zafiyeti bulduğunu iddia ediyor:\n\n"
+            f"📌 Zafiyet Türü: {vuln.get('type')}\n"
+            f"📌 Konum: {vuln.get('location')} (Dosya: {vuln.get('file')})\n"
+            f"📌 Zafiyetli Kod: {vuln.get('vulnerable_code')}\n"
+            f"📌 Açıklama: {vuln.get('description')}\n"
+            f"📌 PoC Komutu: {vuln.get('poc_command')}\n\n"
+            "GÖREVİN VE DEĞERLENDİRME KRİTERLERİN:\n"
+            "1. Bu iddia GERÇEK, dışarıdan istismar edilebilir ve CVE / Bug Bounty almaya değer su sızdırmaz bir zafiyet midir?\n"
+            "2. Yoksa bu bir False Positive mi? (Örn: Zaten herkese açık e-ticaret/sepet verisi, sadece Admin yetkili zararsız dosya yükleme, tam sanitization/nonce olan kod, saçma/değersiz iddia).\n"
+            "3. Eğer zafiyet değersiz, saçma veya False Positive ise KESİNLİKLE 'REJECT' ver.\n\n"
+            "SADECE aşağıdaki JSON formatında yanıt ver:\n"
+            '{"decision": "ACCEPT"} veya {"decision": "REJECT", "reason": "Reddetme sebebi"}'
+        )
+
+        try:
+            response = self.gemini_client.chat.completions.create(
+                model=config.GEMINI_MODEL,
+                messages=[
+                    {"role": "system", "content": "Sen tavizsiz bir Siber Güvenlik Denetçisisin. Yalnızca JSON formatında yanıt verirsin."},
+                    {"role": "user", "content": prompt}
+                ],
+                temperature=0.1,
+                max_tokens=500
+            )
+
+            res_text = response.choices[0].message.content.strip()
+            json_match = re.search(r"\{.*\}", res_text, re.DOTALL)
+            if json_match:
+                res_json = json.loads(json_match.group(0))
+                decision = res_json.get("decision", "REJECT").upper()
+                reason = res_json.get("reason", "Belirtilmedi")
+
+                if decision == "ACCEPT":
+                    print("✅ Gemini AI Hakemi ONAYLADI! (Gerçek CVE adayı)")
+                    return True
+                else:
+                    print(f"🚫 Gemini AI Hakemi REDDETTİ (False Positive): {reason}")
+                    return False
+            else:
+                print("⚠️ Gemini yanıtından JSON alınamadı, Varsayılan kabul edildi.")
+                return True
+
+        except Exception as e:
+            print(f"⚠️ Gemini AI Hakemi doğrulama hatası ({e}), ilk karar korundu.")
+            return True
+
     def filter_high_confidence_vulns(self, results: Dict) -> Dict:
         """Sadece su sızdırmaz doğrulanmış zafiyetleri tut"""
         verified_vulns = []
         total_before = len(results.get("vulnerabilities_found", []))
 
         for vuln in results.get("vulnerabilities_found", []):
+            # 1. Aşama: Python filtreleri & Kurallar
             if self.verify_vulnerability(vuln):
-                verified_vulns.append(vuln)
+                # 2. Aşama: Google Gemini AI Hakem Doğrulaması
+                if self.verify_vulnerability_with_gemini(vuln):
+                    verified_vulns.append(vuln)
 
         filtered_count = total_before - len(verified_vulns)
         if filtered_count > 0:

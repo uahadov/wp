@@ -26,6 +26,15 @@ class TelegramBotHandler:
             base_url=config.GITHUB_API_BASE,
             api_key=config.GITHUB_TOKEN,
         )
+        self.gemini_client = None
+        if config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_api_key_here":
+            try:
+                self.gemini_client = OpenAI(
+                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
+                    api_key=config.GEMINI_API_KEY,
+                )
+            except Exception as e:
+                logger.warning(f"Telegram Bot Gemini client başlatılamadı: {e}")
 
     @staticmethod
     def _escape(text: str) -> str:
@@ -55,24 +64,24 @@ class TelegramBotHandler:
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Bot başlangıç komutu"""
         welcome_message = (
-            "🤖 <b>WordPress Zafiyet Tarayıcı &amp; AI Güvenlik Asistanı</b>\n\n"
+            "🤖 <b>WordPress Zafiyet Tarayıcı &amp; Dual-AI Asistanı</b>\n\n"
             "<b>📋 Kullanılabilir Komutlar:</b>\n"
             "/start - Bot bilgileri\n"
             "/stats - Tarama istatistikleri\n"
             "/latest - Son bulunan zafiyeti göster\n"
-            "/m &lt;mesaj&gt; - AI Siber Güvenlik Uzmanına Soru Sor!\n"
+            "/m &lt;mesaj&gt; - GPT-4o (1. AI) ile konuş!\n"
+            "/m2 &lt;mesaj&gt; - Gemini 2.5/3.5 Flash (2. Hakem AI) ile konuş!\n"
             "/list - Bulunan tüm zafiyetli pluginler\n"
             "/status - Sistem durumu\n"
             "/help - Yardım menüsü\n\n"
             "<b>💬 AI Soru Sor (Örnekler):</b>\n"
             "• <code>/m Son zafiyeti cURL ile nasıl test edebilirim?</code>\n"
-            "• <code>/m SQL Injection için yama önerin nedir?</code>\n"
-            "• <code>/m Bulunan eklentide RCE açığı var mı?</code>"
+            "• <code>/m2 Bu bulunan açık gerçekten CVE almaya değer mi yoksa saçma mı?</code>"
         )
         await update.message.reply_text(welcome_message, parse_mode="HTML")
 
     async def ai_ask_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/m <mesaj> komutu ile AI'a soru sor"""
+        """/m <mesaj> komutu ile GPT-4o AI'a soru sor"""
         if not context.args:
             await update.message.reply_text(
                 "⚠️ Lütfen AI'a sormak istediğiniz soruyu yazın.\n\n"
@@ -83,11 +92,10 @@ class TelegramBotHandler:
 
         user_query = " ".join(context.args)
         status_msg = await update.message.reply_text(
-            "🤖 <i>AI Uzmanı yanıt hazırlıyor...</i>",
+            "🤖 <i>GPT-4o AI yanıt hazırlıyor...</i>",
             parse_mode="HTML"
         )
 
-        # Zafiyet bağlamını al
         vuln_context = self._get_latest_vulnerability_context()
 
         system_prompt = (
@@ -113,21 +121,81 @@ class TelegramBotHandler:
             )
 
             ai_answer = response.choices[0].message.content
-
-            # HTML karakterlerini escape et (AI yanıtı kötü HTML içerebilir)
             escaped_answer = self._escape(ai_answer)
-            formatted_response = f"🤖 <b>AI Güvenlik Uzmanı Yanıtı:</b>\n\n{escaped_answer}"
+            formatted_response = f"🤖 <b>GPT-4o Yanıtı:</b>\n\n{escaped_answer}"
 
-            # Mesaj uzunluğunu kontrol et
             if len(formatted_response) > 4096:
                 formatted_response = formatted_response[:4090] + "\n<i>...(kırpıldı)</i>"
 
             await status_msg.edit_text(formatted_response, parse_mode="HTML")
 
         except Exception as e:
-            logger.error(f"AI yanıt hatası: {e}", exc_info=True)
+            logger.error(f"GPT-4o AI yanıt hatası: {e}", exc_info=True)
             await status_msg.edit_text(
-                f"❌ <b>AI Yanıt Hatası:</b> {self._escape(str(e)[:200])}",
+                f"❌ <b>GPT-4o AI Yanıt Hatası:</b> {self._escape(str(e)[:200])}",
+                parse_mode="HTML"
+            )
+
+    async def ai2_ask_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/m2 <mesaj> komutu ile Google Gemini Hakem AI'a soru sor"""
+        if not context.args:
+            await update.message.reply_text(
+                "⚠️ Lütfen Gemini Hakem AI'a sormak istediğiniz soruyu yazın.\n\n"
+                "<b>Örnek:</b>\n<code>/m2 Bu açık gerçekten CVE almaya değer mi?</code>",
+                parse_mode="HTML"
+            )
+            return
+
+        if not self.gemini_client:
+            await update.message.reply_text(
+                "❌ <b>Google Gemini API Anahtarı Tanımlı Değil!</b>\n"
+                ".env dosyanıza <code>GEMINI_API_KEY</code> ekleyin.",
+                parse_mode="HTML"
+            )
+            return
+
+        user_query = " ".join(context.args)
+        status_msg = await update.message.reply_text(
+            "⚖️ <i>Gemini Hakem AI (Pentester) inceliyor...</i>",
+            parse_mode="HTML"
+        )
+
+        vuln_context = self._get_latest_vulnerability_context()
+
+        system_prompt = (
+            "Sen Tavizsiz, Kıdemli bir Siber Güvenlik Baş Denetçisi (Lead Pentester & CVE Auditor) ve Hakemsin.\n"
+            "Senin görevin zafiyeti övmek değil, ELEŞTİREL gözle bakıp değersiz/saçma/false positive iddiaları reddetmektir.\n\n"
+            "--- SON ZAFIYET BAĞLAMI ---\n"
+            f"{vuln_context[:3000]}\n"
+            "--- BAĞLAM SONU ---\n\n"
+            "Kullanıcının sorusunu bir Pentester sertliği ve gerçekçiliği ile yanıtla. "
+            "Bu açık gerçekten CVE alınabilir su sızdırmaz bir açık mıdır yoksa vakit kaybı mıdır tam açıklığa kavuştur."
+        )
+
+        try:
+            response = self.gemini_client.chat.completions.create(
+                model=config.GEMINI_MODEL,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_query}
+                ],
+                temperature=0.2,
+                max_tokens=1500
+            )
+
+            ai_answer = response.choices[0].message.content
+            escaped_answer = self._escape(ai_answer)
+            formatted_response = f"⚖️ <b>Gemini Hakem AI Yanıtı:</b>\n\n{escaped_answer}"
+
+            if len(formatted_response) > 4096:
+                formatted_response = formatted_response[:4090] + "\n<i>...(kırpıldı)</i>"
+
+            await status_msg.edit_text(formatted_response, parse_mode="HTML")
+
+        except Exception as e:
+            logger.error(f"Gemini AI yanıt hatası: {e}", exc_info=True)
+            await status_msg.edit_text(
+                f"❌ <b>Gemini AI Yanıt Hatası:</b> {self._escape(str(e)[:200])}",
                 parse_mode="HTML"
             )
 
@@ -313,6 +381,7 @@ def start_bot():
 
     application.add_handler(CommandHandler("start", handler.start_command))
     application.add_handler(CommandHandler("m", handler.ai_ask_command))
+    application.add_handler(CommandHandler("m2", handler.ai2_ask_command))
     application.add_handler(CommandHandler("stats", handler.stats_command))
     application.add_handler(CommandHandler("latest", handler.latest_command))
     application.add_handler(CommandHandler("list", handler.list_command))
@@ -322,9 +391,9 @@ def start_bot():
     # Global hata yakalayıcı
     application.add_error_handler(handler.error_handler)
 
-    print("🤖 Telegram Bot & AI Asistanı Başlatılıyor...")
+    print("🤖 Telegram Bot & Dual-AI Asistanı Başlatılıyor...")
     print(f"📱 Chat ID: {config.TELEGRAM_CHAT_ID}")
-    print("✅ Bot Hazır! Telegram'dan /m <sorunuz> yazarak AI ile konuşabilirsiniz.")
+    print("✅ Bot Hazır! GPT-4o için /m <soru>, Gemini 2.5/3.5 Flash Hakem AI için /m2 <soru> kullanabilirsiniz.")
 
     try:
         application.run_polling(allowed_updates=Update.ALL_TYPES, drop_pending_updates=True)

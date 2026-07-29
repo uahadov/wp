@@ -14,6 +14,10 @@ GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "your_github_token_here")
 GITHUB_API_BASE = "https://models.inference.ai.azure.com"
 GITHUB_MODEL = os.getenv("GITHUB_MODEL", "gpt-4o")
 
+# Google Gemini API Ayarları (Secondary AI Validator & /m2 Bot)
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
 # Telegram Ayarları
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "your_telegram_bot_token_here")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "your_chat_id_here")
