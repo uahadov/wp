@@ -27,36 +27,55 @@ from telegram_notifier import TelegramNotifier
 bot_process = None
 
 
+def is_bot_running() -> bool:
+    """Telegram botunun arka planda zaten çalışıp çalışmadığını kontrol et"""
+    try:
+        if sys.platform == "win32":
+            output = subprocess.check_output('tasklist /FI "IMAGENAME eq python.exe"', shell=True, text=True)
+            # telegram_bot.py komut satırında geçiyor mu kontrol et (wmic / powershell ile daha detaylı bakılabilir)
+            cmd = 'wmic process where "name=\'python.exe\'" get commandline'
+            res = subprocess.check_output(cmd, shell=True, text=True, errors="replace")
+            return "telegram_bot.py" in res
+        else:
+            res = subprocess.check_output(["pgrep", "-f", "telegram_bot.py"], text=True)
+            return bool(res.strip())
+    except Exception:
+        return False
+
+
 def start_telegram_bot():
-    """Telegram botunu otomatik arka plan süreci olarak başlat"""
-    global bot_process
+    """Telegram botunu bağımsız (detached) arka plan süreci olarak başlat"""
     if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
         print("⚠️ Telegram bot token tanımlanmadığı için bot başlatılamadı.")
+        return
+
+    if is_bot_running():
+        print("🤖 Telegram Bot & AI Asistanı zaten arka planda çalışıyor!")
         return
 
     try:
         bot_script = Path(__file__).parent / "telegram_bot.py"
         if bot_script.exists():
-            bot_process = subprocess.Popen([sys.executable, str(bot_script)])
-            print("🤖 Telegram Bot & AI Asistanı arka planda otomatik başlatıldı!")
+            if sys.platform == "win32":
+                # Windows'ta bağımsız (detached) süreç olarak başlat
+                DETACHED_PROCESS = 0x00000008
+                CREATE_NEW_PROCESS_GROUP = 0x00000200
+                subprocess.Popen(
+                    [sys.executable, str(bot_script)],
+                    creationflags=DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP,
+                    close_fds=True
+                )
+            else:
+                # Linux/macOS'ta bağımsız süreç olarak başlat
+                subprocess.Popen(
+                    [sys.executable, str(bot_script)],
+                    start_new_session=True,
+                    stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL
+                )
+            print("🤖 Telegram Bot & AI Asistanı bağımsız arka plan süreci olarak başlatıldı (scanner kapansa da çalışmaya devam eder)!")
     except Exception as e:
         print(f"⚠️ Telegram botu başlatılırken hata oluştu: {e}")
-
-
-def stop_telegram_bot():
-    """Script kapandığında Telegram bot sürecini güvenle sonlandır"""
-    global bot_process
-    if bot_process and bot_process.poll() is None:
-        print("\n🛑 Telegram Botu kapatılıyor...")
-        try:
-            bot_process.terminate()
-            bot_process.wait(timeout=3)
-        except Exception:
-            bot_process.kill()
-
-
-# Script sonlandığında botu temizle
-atexit.register(stop_telegram_bot)
 
 # Windows console encoding guard
 if sys.platform == "win32":
