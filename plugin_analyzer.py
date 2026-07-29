@@ -78,8 +78,11 @@ class PluginAnalyzer:
         filtered_plugins = []
         
         try:
-            # Birden fazla sayfadan plugin çek
-            for page in range(1, 6):  # 5 sayfa tara (her sayfa 100 plugin)
+            # Birden fazla sayfadan plugin çek - RASTGELE SAYFALARI TARA
+            import random
+            pages_to_scan = random.sample(range(1, 20), 5)  # 20 sayfa arasından rastgele 5 sayfa
+            
+            for page in pages_to_scan:
                 print(f"📄 Sayfa {page} taranıyor...")
                 
                 try:
@@ -89,7 +92,7 @@ class PluginAnalyzer:
                             "action": "query_plugins",
                             "request[per_page]": 100,
                             "request[page]": page,
-                            "request[browse]": "updated"  # Son güncellenen (eski olanları bul)
+                            "request[browse]": "popular"  # Popüler değil, RASTGELE
                         },
                         timeout=30
                     )

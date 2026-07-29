@@ -24,15 +24,15 @@ WORDPRESS_API = "https://api.wordpress.org/plugins/info/1.2/"
 # Filtreleme Kriterleri (ZAFİYET ARAMA STRATEJİSİ)
 FILTER_CRITERIA = {
     # Az popüler pluginler (daha az incelenmiş olabilir)
-    "max_active_installs": 50000,  # 50.000'den az aktif kurulum
-    "min_active_installs": 100,     # En az 100 kurulum (çok az bilineni atla)
+    "max_active_installs": 100000,  # 50K → 100K (daha geniş)
+    "min_active_installs": 50,      # 100 → 50 (daha düşük)
     
     # Eski pluginler (güncellenmeyen = zafiyet riski yüksek)
-    "min_months_since_update": 3,   # En az 3 ay güncellenmemiş
-    "max_months_since_update": 48,  # En fazla 4 yıl (çok eski olanlar artık kullanılmıyor)
+    "min_months_since_update": 2,   # 3 → 2 ay (daha yeni olanlar dahil)
+    "max_months_since_update": 60,  # 48 → 60 ay (5 yıl, daha eski)
     
     # Rating filtresi (çok kötü ratingli olanları atla - zaten kullanılmıyor)
-    "min_rating": 50,  # En az 50/100 rating
+    "min_rating": 20,  # 50 → 20 (çok daha geniş)
     
     # Daha önce zafiyet bulunan kategoriler (öncelik ver)
     "prioritize_categories": [
