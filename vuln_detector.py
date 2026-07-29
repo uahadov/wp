@@ -142,14 +142,13 @@ class VulnerabilityDetector:
         return results
     
     def verify_vulnerability(self, vulnerability: Dict) -> bool:
-        """Zafiyetin gerçek ve istismar edilebilir olup olmadığını sıkı kurallarla doğrula"""
+        """Zafiyetin gerçek ve Wordfence Bug Bounty kriterlerine uygunluğunu doğrula"""
         severity = vulnerability.get("severity", "Low")
         cvss_score = float(vulnerability.get("cvss_score", 0))
         vuln_code = vulnerability.get("vulnerable_code", "")
         desc = vulnerability.get("description", "").lower()
-        exploit = vulnerability.get("exploit_scenario", "").lower()
 
-        # 1.uninstall veya kaldırma dosyası ise reddet
+        # 1. uninstall veya kaldırma dosyası ise reddet
         loc = vulnerability.get("location", "").lower()
         if "uninstall" in loc or "uninstall.php" in desc:
             return False
@@ -158,14 +157,14 @@ class VulnerabilityDetector:
         if not vuln_code or len(vuln_code.strip()) < 5:
             return False
 
-        # 3. CVSS skoru 7.0 ve üzeri olmalı
+        # 3. CVSS skoru 7.0 ve üzeri olmalı (Wordfence Bounty Eşiği)
         if cvss_score < 7.0:
             return False
 
         # 4. Kod içerisinde kullanıcı girdisi var mı kontrol et
-        user_inputs = ["$_get", "$_post", "$_request", "$_cookie", "$_files", "php://input"]
+        user_inputs = ["$_get", "$_post", "$_request", "$_cookie", "$_files", "php://input", "rest_base", "request["]
         code_has_input = any(inp in vuln_code.lower() for inp in user_inputs)
-        desc_has_input = any(inp in desc for inp in user_inputs) or "user input" in desc or "unsanitized" in desc
+        desc_has_input = any(inp in desc for inp in user_inputs) or "user input" in desc or "unsanitized" in desc or "unauthenticated" in desc or "missing authorization" in desc
 
         if not (code_has_input or desc_has_input):
             return False

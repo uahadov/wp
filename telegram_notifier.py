@@ -94,6 +94,7 @@ class TelegramNotifier:
             sev = vuln.get("severity", "High")
             severity_emoji = "🔴" if sev == "Critical" else "🟠" if sev == "High" else "🟡"
             cvss = vuln.get("cvss_score", "N/A")
+            wf_cat = vuln.get("wordfence_category", "Wordfence Verified Exploit")
             location = vuln.get("location", vuln.get("file", "N/A"))
             vulnerable_code = vuln.get("vulnerable_code", "Belirtilmemiş")
             desc = vuln.get("description", "Açıklama yok")
@@ -102,7 +103,8 @@ class TelegramNotifier:
             rec = vuln.get("recommendation", "Öneri yok")
 
             message += (
-                f"<b>{idx}. {vuln['type']}</b> {severity_emoji}\n\n"
+                f"<b>{idx}. {vuln['type']}</b> {severity_emoji}\n"
+                f"🛡️ <b>Wordfence Kategori:</b> {wf_cat}\n"
                 f"🔥 <b>CVSS Skor:</b> {cvss} ({sev})\n"
                 f"📍 <b>Konum:</b> <code>{location}</code>\n\n"
                 f"💻 <b>Zafiyetli Kod Parçası:</b>\n"
