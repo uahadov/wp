@@ -21,6 +21,14 @@ from plugin_analyzer import PluginAnalyzer
 from vuln_detector import VulnerabilityDetector
 from telegram_notifier import TelegramNotifier
 
+# Windows console encoding guard
+if sys.platform == "win32":
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+        sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
+
 # Temel loglama konfigürasyonu
 logging.basicConfig(
     level=logging.WARNING,
@@ -31,12 +39,12 @@ logging.basicConfig(
 def print_banner():
     """Başlangıç banner'ı"""
     banner = """
-╔════════════════════════════════════════════════════════════╗
-║                                                            ║
-║        WordPress Plugin Vulnerability Scanner             ║
-║                   AI Powered Security                      ║
-║                                                            ║
-╚════════════════════════════════════════════════════════════╝
++------------------------------------------------------------+
+|                                                            |
+|        WordPress Plugin Vulnerability Scanner              |
+|                   AI Powered Security                      |
+|                                                            |
++------------------------------------------------------------+
 """
     print(banner)
 
