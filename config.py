@@ -3,14 +3,20 @@ Yapılandırma dosyası
 Kendi bilgilerinizi buraya girin
 """
 
+import os
+from dotenv import load_dotenv
+
+# .env dosyasını yükle
+load_dotenv()
+
 # GitHub AI Models API Ayarları
-GITHUB_TOKEN = "your_github_token_here"  # GitHub AI Models API token'ınız
+GITHUB_TOKEN = os.getenv("GITHUB_TOKEN", "your_github_token_here")  # GitHub AI Models API token'ınız
 GITHUB_API_BASE = "https://models.inference.ai.azure.com"  # GitHub AI Models endpoint
-GITHUB_MODEL = "gpt-4o"  # Kullanılacak model
+GITHUB_MODEL = os.getenv("GITHUB_MODEL", "gpt-4o")  # Kullanılacak model
 
 # Telegram Ayarları
-TELEGRAM_BOT_TOKEN = "your_telegram_bot_token_here"  # @BotFather'dan aldığınız token
-TELEGRAM_CHAT_ID = "6532122431"  # Sizin chat ID'niz
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "your_telegram_bot_token_here")  # @BotFather'dan aldığınız token
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "your_chat_id_here")  # Sizin chat ID'niz
 
 # Tarama Ayarları
 PLUGINS_PER_SCAN = 5  # Her taramada kaç plugin analiz edilecek (RAM'e göre ayarlayın)
@@ -117,10 +123,10 @@ Eğer bir zafiyet bulursan:
 - CVSSv3 skorunu tahmin et
 
 JSON formatında yanıt ver:
-{
+{{
     "vulnerable": true/false,
     "vulnerabilities": [
-        {
+        {{
             "type": "zafiyet türü",
             "severity": "Critical/High/Medium/Low",
             "cvss_score": 0.0-10.0,
@@ -128,8 +134,8 @@ JSON formatında yanıt ver:
             "description": "detaylı açıklama",
             "exploit_scenario": "nasıl istismar edilir",
             "recommendation": "nasıl düzeltilir"
-        }
+        }}
     ]
-}
+}}
 
 SADECE gerçek ve kesin zafiyetleri raporla. Tahmine dayalı veya belirsiz durumları ekleme."""

@@ -32,3 +32,9 @@ Thumbs.db
 
 # Zip dosyaları
 *.zip
+
+# Test & DB
+scanned_plugins.json
+test_all.py
+test_report_full.json
+test-filter.py

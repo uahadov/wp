@@ -69,7 +69,19 @@ class VulnerabilityDetector:
                 }
                 
         except Exception as e:
-            print(f"⚠️  AI API hatası - atlanıyor")
+            err_type = type(e).__name__
+            err_msg = str(e)
+            # Rate limit hatası
+            if "429" in err_msg or "rate" in err_msg.lower():
+                print(f"⚠️  AI Rate Limit - 10 saniye bekleniyor...")
+                import time
+                time.sleep(10)
+            elif "401" in err_msg or "unauthorized" in err_msg.lower():
+                print(f"❌ AI Auth Hatası - GitHub Token geçersiz: {err_msg[:100]}")
+            elif "timeout" in err_msg.lower() or "connection" in err_msg.lower():
+                print(f"❌ AI Bağlantı Hatası: {err_msg[:100]}")
+            else:
+                print(f"❌ AI API Hatası ({err_type}): {err_msg[:150]}")
             return {
                 "vulnerable": False,
                 "vulnerabilities": []

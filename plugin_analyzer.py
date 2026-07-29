@@ -306,6 +306,12 @@ class PluginAnalyzer:
         try:
             for php_file in plugin_path.rglob("*.php"):
                 if php_file.is_file():
+                    # Vendor ve 3. parti kütüphaneleri atla (sadece eklentinin kendi koduna odaklan)
+                    rel_path_str = str(php_file.relative_to(plugin_path)).replace("\\", "/")
+                    ignore_dirs = ["vendor/", "node_modules/", "libs/", "libraries/"]
+                    if any(dir_name in rel_path_str.lower() for dir_name in ignore_dirs):
+                        continue
+
                     # Dosya boyutunu kontrol et (çok büyük dosyaları atla)
                     if php_file.stat().st_size > 500 * 1024:  # 500KB üzeri
                         continue
