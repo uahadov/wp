@@ -156,12 +156,15 @@ GÖREV: Aşağıdaki WordPress PHP kodunu analiz et ve SADECE WORDFENCE BUG BOUN
    - Open Redirect
 
 ⛔ KESİNLİKLE YASAK VE ZAFİYET SAYILMAYAN DURUMLAR (VULNERABLE: FALSE VER):
+- WooCommerce standart müşteri işlemleri (sepet, ürün ID alma, sepete ekleme, `woocommerce_add_to_cart_...`, `product_id` okuma) ZAFİYET DEĞİLDİR. Bunlar herkese açık e-ticaret işlevleridir.
+- Zaten herkese açık (public) olan verilerin (ürün adı, fiyatı, resim URL'si, post başlığı) AJAX ile okunması ZAFİYET DEĞİLDİR.
+- Sadece `Administrator` yetkisine sahip kullanıcıların yapabildiği işlemler (Admin Paneli dosya yükleme, eklenti ayarı değiştirme) ZAFİYET DEĞİLDİR (Admin zaten tam yetkilidir).
 - 'uninstall.php' veya eklenti silme/kaldırma kodları ZAFİYET DEĞİLDİR.
 - Sadece `is_admin()` veya `current_user_can('manage_options')` kontrolünden geçen yetkili yönetici fonksiyonları ZAFİYET DEĞİLDİR.
 - Dışarıdan kullanıcı girdisi ($_GET, $_POST, $_REQUEST, $_COOKIE, php://input, REST API params) İÇERMEYEN sabit kodlar ZAFİYET DEĞİLDİR.
-- $wpdb->prepare(), intval(), sanitize_text_field(), esc_html(), esc_attr(), wp_verify_nonce() ile tam korunan kodlar ZAFİYET DEĞİLDİR.
+- $wpdb->prepare(), intval(), (int), sanitize_text_field(), esc_html(), esc_attr(), wp_verify_nonce() ile korunan kodlar ZAFİYET DEĞİLDİR.
 - Önemsiz bilgi ifşası (WordPress versiyonu vb.) ZAFİYET DEĞİLDİR.
-- Admin paneliyle sınırlı, sadece yönetici görebilir XSS ZAFİYET DEĞİLDİR (CVSS < 4.0).
+- Admin paneliyle sınırlı, sadece yönetici görebilir XSS ZAFİYET DEĞİLDİR.
 
 ÖNEMLİ HATIRLATMA:
 - Zafiyet bulmak için KENDİN kod uydurmayacaksın.

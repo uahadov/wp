@@ -192,13 +192,31 @@ class VulnerabilityDetector:
                 print(f"  🚫 Reddedildi: Kullanıcı girdisi bağı yok")
                 return False
 
-            # 5. Kodda Temizleme/Koruma Fonksiyonu Varsa REDDET (False Positive Koruması)
-            # NOT: $wpdb->prepare varsa TEK BAŞINA reddetme; ek bypass olup olmadığına bak
+            # 5. WooCommerce Sepet / Müşteri public eylemleri ZAFİYET DEĞİLDİR (Otomatik Reddet)
+            public_wc_keywords = ["add_to_cart", "product_id", "cart_fragments", "woocommerce_add_to_cart"]
+            if any(kw in vuln_code.lower() for kw in public_wc_keywords) or any(kw in desc for kw in public_wc_keywords):
+                if "missing authorization" in vuln_type or "missing authorization" in desc:
+                    print(f"  🚫 Reddedildi: WooCommerce standart public müşteri eylemi / product_id kullanımı")
+                    return False
+
+            # 6. Type casting (int) veya intval() yapılmış parametreler SQLi / Injection olamaz (Otomatik Reddet)
+            if "(int)" in vuln_code or "intval(" in vuln_code or "absint(" in vuln_code:
+                if "sql" in vuln_type or "injection" in vuln_type or "rce" in vuln_type:
+                    print(f"  🚫 Reddedildi: Parametre (int) / intval() ile güvenli tamsayıya dönüştürülmüş")
+                    return False
+
+            # 7. Kodda Temizleme/Koruma Fonksiyonu Varsa REDDET (False Positive Koruması)
             full_sanitizers = [
                 "sanitize_text_field", "esc_html", "esc_attr",
                 "intval(", "(int)", "absint(",
-                "wp_verify_nonce",
+                "wp_verify_nonce", "check_ajax_referer"
             ]
+            
+            # Nonce veya ajax referer kontrolü açıklama veya kodda varsa reddet
+            if "wp_verify_nonce" in vuln_code or "check_ajax_referer" in vuln_code:
+                print(f"  🚫 Reddedildi: Nonce / Referer kontrolü mevcut")
+                return False
+
             # Sadece tam korumayı reddet
             if all(san in vuln_code for san in ["$wpdb->prepare"]) and not any(
                 bypass in vuln_code.lower() for bypass in ["$_get", "$_post", "$_request", "$_cookie"]
