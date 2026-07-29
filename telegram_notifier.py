@@ -5,6 +5,7 @@ Bulunan zafiyetleri Telegram üzerinden detaylı şekilde bildirir
 """
 
 import asyncio
+import html
 from typing import Dict
 from telegram import Bot
 from telegram.error import TelegramError
@@ -16,13 +17,32 @@ class TelegramNotifier:
         self.token = config.TELEGRAM_BOT_TOKEN
         self.chat_id = config.TELEGRAM_CHAT_ID
 
+    @staticmethod
+    def _escape(text: str) -> str:
+        """Telegram HTML parse_mode için özel karakterleri kaçış yaptır (XSS / parse hatası önleme)"""
+        if not text:
+            return ""
+        return html.escape(str(text), quote=False)
+
     async def _send_async_message(self, message: str):
         """Telegram'a mesaj gönder (Her çağrıda temiz Bot instance)"""
         bot = Bot(token=self.token)
         try:
             # Mesaj çok uzunsa böl (Telegram limiti 4096 karakter)
             if len(message) > 4096:
-                chunks = [message[i:i+4090] for i in range(0, len(message), 4090)]
+                # Parçalara böl - HTML tag'larını kırmamaya özen göster
+                chunks = []
+                current = ""
+                for line in message.splitlines(keepends=True):
+                    if len(current) + len(line) > 4090:
+                        if current:
+                            chunks.append(current)
+                        current = line
+                    else:
+                        current += line
+                if current:
+                    chunks.append(current)
+
                 for chunk in chunks:
                     await bot.send_message(
                         chat_id=self.chat_id,
@@ -49,6 +69,25 @@ class TelegramNotifier:
         """Senkron olarak async mesaj göndericiyi tetikle"""
         try:
             return asyncio.run(self._send_async_message(message))
+        except RuntimeError as e:
+            # Zaten çalışan bir event loop varsa (örn. Jupyter/asyncio context)
+            if "running event loop" in str(e).lower():
+                print(f"⚠️ Event loop conflict, yeni thread'de çalıştırılıyor")
+                import threading
+                result = [False]
+                def run_in_thread():
+                    loop = asyncio.new_event_loop()
+                    asyncio.set_event_loop(loop)
+                    try:
+                        result[0] = loop.run_until_complete(self._send_async_message(message))
+                    finally:
+                        loop.close()
+                t = threading.Thread(target=run_in_thread)
+                t.start()
+                t.join(timeout=30)
+                return result[0]
+            print(f"❌ Telegram mesaj hatası: {e}")
+            return False
         except Exception as e:
             print(f"❌ Telegram mesaj hatası: {e}")
             return False
@@ -57,58 +96,62 @@ class TelegramNotifier:
         """Zafiyet raporunu Telegram mesajı olarak ÇOK DETAYLI formatla"""
 
         slug = results.get("plugin_slug", "")
-        download_url = f"https://downloads.wordpress.org/plugin/{slug}.{results.get('plugin_version', '')}.zip"
+        version = results.get("plugin_version", "")
+        download_url = f"https://downloads.wordpress.org/plugin/{slug}.{version}.zip" if slug and version else "N/A"
 
         if not results.get("vulnerabilities_found"):
             message = (
                 "🔍 <b>WordPress Plugin Taraması</b>\n\n"
-                f"📦 <b>Plugin:</b> {results['plugin_name']}\n"
-                f"📌 <b>Versiyon:</b> {results['plugin_version']}\n"
-                f"🕐 <b>Tarih:</b> {results['scan_timestamp']}\n\n"
+                f"📦 <b>Plugin:</b> {self._escape(results.get('plugin_name', 'Unknown'))}\n"
+                f"📌 <b>Versiyon:</b> {self._escape(version)}\n"
+                f"🕐 <b>Tarih:</b> {self._escape(results.get('scan_timestamp', 'N/A'))}\n\n"
                 f"✅ <b>Sonuç:</b> Doğrulanabilir Zafiyet Bulunamadı\n"
-                f"📊 {results['total_files_analyzed']} dosya analiz edildi"
+                f"📊 {results.get('total_files_analyzed', 0)} dosya analiz edildi"
             )
             return message
 
-        summary = results["summary"]
+        summary = results.get("summary", {})
 
         message = (
             "🚨 <b>KRİTİK ZAFIYET BULUNDU!</b> 🚨\n\n"
-            f"📦 <b>Plugin:</b> {results['plugin_name']}\n"
-            f"📌 <b>Versiyon:</b> {results['plugin_version']}\n"
+            f"📦 <b>Plugin:</b> {self._escape(results.get('plugin_name', 'Unknown'))}\n"
+            f"📌 <b>Versiyon:</b> {self._escape(version)}\n"
             f"🔗 <b>İndirme Linki:</b> {download_url}\n"
-            f"🕐 <b>Tarih:</b> {results['scan_timestamp']}\n\n"
-            f"📊 <b>Toplam Doğrulanmış Zafiyet:</b> {summary['total_vulnerabilities']}\n"
+            f"🕐 <b>Tarih:</b> {self._escape(results.get('scan_timestamp', 'N/A'))}\n\n"
+            f"📊 <b>Toplam Doğrulanmış Zafiyet:</b> {summary.get('total_vulnerabilities', 0)}\n"
         )
 
         if "by_severity" in summary:
             message += "\n<b>Önem Dağılımı:</b>\n"
             for severity, count in summary["by_severity"].items():
                 sev_emoji = "🔴" if severity == "Critical" else "🟠" if severity == "High" else "🟡" if severity == "Medium" else "🟢"
-                message += f"{sev_emoji} {severity}: {count}\n"
+                message += f"{sev_emoji} {self._escape(severity)}: {count}\n"
 
         message += "\n" + "=" * 35 + "\n\n"
 
         # Her zafiyet için DETAYLI açıklama
-        for idx, vuln in enumerate(results["vulnerabilities_found"], 1):
+        for idx, vuln in enumerate(results.get("vulnerabilities_found", []), 1):
             sev = vuln.get("severity", "High")
             severity_emoji = "🔴" if sev == "Critical" else "🟠" if sev == "High" else "🟡"
             cvss = vuln.get("cvss_score", "N/A")
-            wf_cat = vuln.get("wordfence_category", "Wordfence Verified Exploit")
-            location = vuln.get("location", vuln.get("file", "N/A"))
-            vulnerable_code = vuln.get("vulnerable_code", "Belirtilmemiş")
-            desc = vuln.get("description", "Açıklama yok")
-            exploit = vuln.get("exploit_scenario", "Senaryo yok")
-            poc = vuln.get("poc_command", "cURL/HTTP isteği yok")
-            rec = vuln.get("recommendation", "Öneri yok")
+            wf_cat = self._escape(vuln.get("wordfence_category", "Wordfence Verified Exploit"))
+            location = self._escape(vuln.get("location", vuln.get("file", "N/A")))
+            vuln_type = self._escape(vuln.get("type", "Unknown"))
+
+            # Kod parçası: HTML tag'larını escape et, çok uzunsa kırp
+            vulnerable_code = self._escape(str(vuln.get("vulnerable_code", "Belirtilmemiş")))[:350]
+            poc = self._escape(str(vuln.get("poc_command", "N/A")))[:500]
+            desc = self._escape(str(vuln.get("description", "Açıklama yok")))
+            exploit = self._escape(str(vuln.get("exploit_scenario", "Senaryo yok")))
+            rec = self._escape(str(vuln.get("recommendation", "Öneri yok")))
 
             message += (
-                f"<b>{idx}. {vuln['type']}</b> {severity_emoji}\n"
+                f"<b>{idx}. {vuln_type}</b> {severity_emoji}\n"
                 f"🛡️ <b>Wordfence Kategori:</b> {wf_cat}\n"
                 f"🔥 <b>CVSS Skor:</b> {cvss} ({sev})\n"
                 f"📍 <b>Konum:</b> <code>{location}</code>\n\n"
                 f"💻 <b>Zafiyetli Kod Parçası:</b>\n"
-                f"<code>{vulnerable_code[:300]}</code>\n\n"
+                f"<code>{vulnerable_code}</code>\n\n"
                 f"📝 <b>Açıklama:</b>\n{desc}\n\n"
                 f"🎯 <b>Exploit Senaryosu:</b>\n{exploit}\n\n"
                 f"🧪 <b>Manuel Test Komutu (PoC):</b>\n"

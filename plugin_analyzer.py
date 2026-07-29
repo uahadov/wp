@@ -5,11 +5,13 @@ WordPress plugin indirme ve analiz modülü
 import os
 import re
 import json
+import random
 import zipfile
+import shutil
 import requests
 from pathlib import Path
 from typing import List, Dict, Optional
-from datetime import datetime, timedelta
+from datetime import datetime
 import config
 
 
@@ -17,24 +19,36 @@ class PluginAnalyzer:
     def __init__(self):
         self.work_dir = Path(config.WORK_DIR)
         self.work_dir.mkdir(exist_ok=True)
+        self.results_dir = Path(config.RESULTS_DIR)
+        self.results_dir.mkdir(exist_ok=True)
         self.scanned_db_path = Path(config.SCANNED_PLUGINS_DB)
         self.scanned_plugins = self._load_scanned_db()
-    
+
     def _load_scanned_db(self) -> Dict:
-        """Daha önce taranan pluginlerin veritabanını yükle"""
+        """Daha önce taranan pluginlerin veritabanını güvenli yükle"""
         if self.scanned_db_path.exists():
             try:
                 with open(self.scanned_db_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
-            except:
+                    data = json.load(f)
+                if not isinstance(data, dict):
+                    print("⚠️ Veritabanı formatı bozuk, yeni veritabanı oluşturuluyor.")
+                    return {}
+                return data
+            except (json.JSONDecodeError, OSError) as e:
+                print(f"⚠️ Veritabanı okuma hatası ({e}), yeni veritabanı oluşturuluyor.")
                 return {}
         return {}
-    
+
     def _save_scanned_db(self):
-        """Taranan pluginleri kaydet"""
-        with open(self.scanned_db_path, "w", encoding="utf-8") as f:
-            json.dump(self.scanned_plugins, f, indent=2, ensure_ascii=False)
-    
+        """Taranan pluginleri atomic (bozulmaya karşı korumalı) olarak kaydet"""
+        try:
+            tmp_path = self.scanned_db_path.with_suffix(".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
+                json.dump(self.scanned_plugins, f, indent=2, ensure_ascii=False)
+            tmp_path.replace(self.scanned_db_path)
+        except Exception as e:
+            print(f"⚠️ Veritabanı kaydetme hatası: {e}")
+
     def mark_as_scanned(self, plugin_slug: str, version: str, found_vulns: bool):
         """Plugin'i tarandı olarak işaretle"""
         self.scanned_plugins[plugin_slug] = {
@@ -43,346 +57,369 @@ class PluginAnalyzer:
             "found_vulnerabilities": found_vulns
         }
         self._save_scanned_db()
-    
+
     def is_already_scanned(self, plugin_slug: str, version: str) -> bool:
         """Plugin'in bu versiyonu daha önce tarandı mı?"""
-        if not config.TRACK_SCANNED_PLUGINS:
+        if not getattr(config, "TRACK_SCANNED_PLUGINS", True):
             return False
-        
+
         if plugin_slug in self.scanned_plugins:
             scanned_version = self.scanned_plugins[plugin_slug].get("version")
             return scanned_version == version
         return False
-    
+
     def calculate_months_since_update(self, last_updated: str) -> int:
         """Son güncellemeden bu yana geçen ay sayısı"""
         try:
-            # WordPress API formatı: "2023-05-15 3:42pm GMT"
-            update_date = datetime.strptime(last_updated.split()[0], "%Y-%m-%d")
+            # "2022-10-15 3:05am GMT" gibi formatları da destekle
+            date_str = last_updated.strip().split()[0]
+            update_date = datetime.strptime(date_str, "%Y-%m-%d")
             now = datetime.now()
             delta = now - update_date
-            return int(delta.days / 30)
-        except:
-            return 0
-    
+            return max(0, int(delta.days / 30))
+        except Exception:
+            return 12  # Varsayılan 1 yıl
+
     def get_targeted_plugins(self, count: int = 50) -> List[Dict]:
         """Hedefli plugin taraması - az bilinen ve eski pluginler"""
         print(f"🎯 Hedefli plugin taraması başlıyor...")
-        print(f"📊 Kriterler:")
-        print(f"   • Aktif kurulum: {config.FILTER_CRITERIA['min_active_installs']:,} - {config.FILTER_CRITERIA['max_active_installs']:,}")
-        print(f"   • Son güncelleme: {config.FILTER_CRITERIA['min_months_since_update']}-{config.FILTER_CRITERIA['max_months_since_update']} ay önce")
-        print(f"   • Minimum rating: {config.FILTER_CRITERIA['min_rating']}/100")
-        print()
-        
         all_plugins = []
         filtered_plugins = []
-        
-        try:
-            # Birden fazla sayfadan plugin çek - RASTGELE SAYFALARI TARA
-            import random
-            pages_to_scan = random.sample(range(1, 20), 5)  # 20 sayfa arasından rastgele 5 sayfa
-            
-            for page in pages_to_scan:
-                print(f"📄 Sayfa {page} taranıyor...")
-                
-                try:
-                    response = requests.get(
-                        f"{config.WORDPRESS_API}",
-                        params={
-                            "action": "query_plugins",
-                            "request[per_page]": 100,
-                            "request[page]": page,
-                            "request[browse]": "popular"  # Popüler değil, RASTGELE
-                        },
-                        timeout=30
-                    )
-                    
-                    if response.status_code == 200:
+
+        # Farklı browse kategorileri: sadece "popular" değil çeşitlendiriyoruz
+        browse_types = ["popular", "new", "updated"]
+        max_page = 25
+        sample_size = min(5, max_page)
+        pages_to_scan = random.sample(range(1, max_page + 1), sample_size)
+
+        for page in pages_to_scan:
+            browse = random.choice(browse_types)
+            print(f"📄 Sayfa {page} ({browse}) taranıyor...")
+            try:
+                response = requests.get(
+                    config.WORDPRESS_API,
+                    params={
+                        "action": "query_plugins",
+                        "request[per_page]": 100,
+                        "request[page]": page,
+                        "request[browse]": browse
+                    },
+                    timeout=25,
+                    headers={"User-Agent": "WP-Vuln-Scanner/1.0 (Security Research)"}
+                )
+
+                if response.status_code == 200:
+                    try:
                         data = response.json()
-                        plugins = data.get("plugins", [])
-                        if plugins:
-                            all_plugins.extend(plugins)
-                            print(f"   ✓ {len(plugins)} plugin alındı")
-                        else:
-                            print(f"   ⚠️  Sayfa {page} boş")
-                            break
+                    except Exception:
+                        print(f"   ⚠️ JSON parse hatası sayfa {page}")
+                        continue
+
+                    plugins = data.get("plugins", [])
+                    if plugins:
+                        all_plugins.extend(plugins)
+                        print(f"   ✓ {len(plugins)} plugin alındı")
                     else:
-                        print(f"   ❌ HTTP {response.status_code}")
-                        break
-                        
-                except Exception as e:
-                    print(f"   ❌ Sayfa {page} hatası: {e}")
-                    break
-            
-            if not all_plugins:
-                print("❌ Hiç plugin alınamadı!")
-                print("⚠️  WordPress API'de sorun olabilir")
-                print("🔄 30 saniye sonra tekrar deneyin...")
-                return []
-            
-            print(f"✅ Toplam {len(all_plugins)} plugin bulundu")
-            print(f"🔍 Filtreleme yapılıyor...\n")
-            
-            # Filtreleme yap
-            for plugin in all_plugins:
-                try:
-                    slug = plugin.get("slug", "")
-                    version = plugin.get("version", "1.0.0")
-                    active_installs = int(plugin.get("active_installs", 0))
-                    rating = float(plugin.get("rating", 0))
-                    last_updated = plugin.get("last_updated", "")
-                    
-                    # Boş slug atla
-                    if not slug:
-                        continue
-                    
-                    # Daha önce tarandı mı kontrol et
-                    if self.is_already_scanned(slug, version):
-                        continue
-                    
-                    # Aktif kurulum filtresi
-                    if active_installs > config.FILTER_CRITERIA["max_active_installs"]:
-                        continue
-                    if active_installs < config.FILTER_CRITERIA["min_active_installs"]:
-                        continue
-                    
-                    # Rating filtresi (0 ise kabul et)
-                    if rating > 0 and rating < config.FILTER_CRITERIA["min_rating"]:
-                        continue
-                    
-                    # Güncelleme tarihi filtresi
-                    if last_updated:
-                        months_since_update = self.calculate_months_since_update(last_updated)
-                        if months_since_update < config.FILTER_CRITERIA["min_months_since_update"]:
-                            continue
-                        if months_since_update > config.FILTER_CRITERIA["max_months_since_update"]:
-                            continue
-                    else:
-                        months_since_update = 12  # Varsayılan
-                    
-                    # Filtreyi geçti!
-                    plugin_info = {
-                        "name": plugin.get("name", slug),
-                        "slug": slug,
-                        "version": version,
-                        "download_link": plugin.get("download_link", ""),
-                        "author": plugin.get("author", "Unknown"),
-                        "rating": rating,
-                        "num_ratings": int(plugin.get("num_ratings", 0)),
-                        "active_installs": active_installs,
-                        "last_updated": last_updated,
-                        "months_since_update": months_since_update,
-                        "categories": plugin.get("categories", {}),
-                        "priority_score": self._calculate_priority_score(plugin, months_since_update)
-                    }
-                    
-                    filtered_plugins.append(plugin_info)
-                    
-                except Exception as e:
-                    # Tek bir plugin hatası taramayı durdurmasın
-                    continue
-            
-            # Öncelik skoruna göre sırala (en yüksek risk en üstte)
-            filtered_plugins.sort(key=lambda x: x["priority_score"], reverse=True)
-            
-            # İstenen sayıda plugin döndür
-            result = filtered_plugins[:count]
-            
-            if not result:
-                print(f"⚠️  Filtreyi geçen plugin bulunamadı")
-                print(f"💡 İpucu: Filtreleri gevşetin (config.py)")
-                return []
-            
-            print(f"✅ {len(result)} hedef plugin belirlendi")
-            if result:
-                print(f"📊 Ortalama son güncelleme: {sum(p['months_since_update'] for p in result) / len(result):.1f} ay önce")
-            print()
-            
-            return result
-            
-        except Exception as e:
-            print(f"❌ Plugin listesi alınamadı: {e}")
+                        print(f"   ⚠️ Sayfa {page} boş")
+                else:
+                    print(f"   ❌ HTTP {response.status_code}")
+
+            except requests.exceptions.Timeout:
+                print(f"   ❌ Sayfa {page} zaman aşımı")
+                continue
+            except requests.exceptions.ConnectionError:
+                print(f"   ❌ Sayfa {page} bağlantı hatası")
+                continue
+            except Exception as e:
+                print(f"   ❌ Sayfa {page} hatası: {e}")
+                continue
+
+        if not all_plugins:
+            print("❌ Hiç plugin alınamadı. İnternet veya WordPress API yanıt vermiyor.")
             return []
-    
+
+        print(f"✅ Toplam {len(all_plugins)} plugin çekildi. Filtreleniyor...\n")
+
+        seen_slugs = set()  # Duplicate slug'ları önle
+        for plugin in all_plugins:
+            try:
+                slug = plugin.get("slug", "")
+                if not slug or slug in seen_slugs:
+                    continue
+                seen_slugs.add(slug)
+
+                version = str(plugin.get("version", "1.0.0"))
+                active_installs_raw = plugin.get("active_installs", 0)
+                # active_installs bazen "1,000+" gibi string gelebilir
+                if isinstance(active_installs_raw, str):
+                    active_installs = int(re.sub(r"[^0-9]", "", active_installs_raw) or 0)
+                else:
+                    active_installs = int(active_installs_raw)
+
+                rating = float(plugin.get("rating", 0))
+                last_updated = plugin.get("last_updated", "")
+
+                if self.is_already_scanned(slug, version):
+                    continue
+
+                if active_installs > config.FILTER_CRITERIA["max_active_installs"]:
+                    continue
+                if active_installs < config.FILTER_CRITERIA["min_active_installs"]:
+                    continue
+                if 0 < rating < config.FILTER_CRITERIA["min_rating"]:
+                    continue
+
+                months_since_update = (
+                    self.calculate_months_since_update(last_updated) if last_updated else 12
+                )
+                if months_since_update < config.FILTER_CRITERIA["min_months_since_update"]:
+                    continue
+                if months_since_update > config.FILTER_CRITERIA["max_months_since_update"]:
+                    continue
+
+                download_link = plugin.get(
+                    "download_link",
+                    f"https://downloads.wordpress.org/plugin/{slug}.{version}.zip"
+                )
+
+                plugin_info = {
+                    "name": plugin.get("name", slug),
+                    "slug": slug,
+                    "version": version,
+                    "download_link": download_link,
+                    "author": plugin.get("author", "Unknown"),
+                    "rating": rating,
+                    "num_ratings": int(plugin.get("num_ratings", 0)),
+                    "active_installs": active_installs,
+                    "last_updated": last_updated,
+                    "months_since_update": months_since_update,
+                    "categories": plugin.get("categories", {}),
+                    "priority_score": self._calculate_priority_score(plugin, months_since_update)
+                }
+                filtered_plugins.append(plugin_info)
+
+            except Exception as e:
+                # Hatalı plugin verisini sessizce atla (log'a yaz)
+                print(f"   ⚠️ Plugin verisi parse hatası: {e}")
+                continue
+
+        filtered_plugins.sort(key=lambda x: x["priority_score"], reverse=True)
+        result = filtered_plugins[:count]
+        print(f"📊 Filtre sonrası {len(result)} plugin taranmaya hazır.")
+        return result
+
     def _calculate_priority_score(self, plugin: Dict, months_since_update: int) -> float:
-        """Plugin'in zafiyet bulunma olasılığını skorla"""
-        score = 0.0
-        
-        # Eski plugin = daha yüksek risk
-        score += months_since_update * 2
-        
-        # Orta popülerlik = daha az incelenmiş
+        """Risk Skoru Hesapla"""
+        score = float(months_since_update * 2)
         active_installs = plugin.get("active_installs", 0)
+        if isinstance(active_installs, str):
+            active_installs = int(re.sub(r"[^0-9]", "", active_installs) or 0)
+
         if 1000 < active_installs < 10000:
             score += 20
-        elif 10000 < active_installs < 30000:
+        elif 10000 <= active_installs < 30000:
             score += 10
-        
-        # Öncelikli kategoriler
-        categories = plugin.get("categories", {})
+
+        categories = str(plugin.get("categories", {})).lower()
         for priority_cat in config.FILTER_CRITERIA["prioritize_categories"]:
-            if priority_cat in str(categories).lower():
+            if priority_cat in categories:
                 score += 30
-        
-        # Düşük rating = olası kod kalitesi sorunları
-        rating = plugin.get("rating", 100)
-        if rating < 80:
+                break
+
+        rating = float(plugin.get("rating", 100))
+        if 0 < rating < 80:
             score += (80 - rating) / 2
-        
+
         return score
-    
+
     def download_plugin(self, plugin: Dict) -> Optional[Path]:
-        """Plugin'in EN SON VERSİYONUNU indir"""
-        try:
-            slug = plugin["slug"]
-            
-            # EN SON VERSİYONU API'den al (güncel olduğundan emin ol)
-            print(f"🔄 {plugin['name']} için en son versiyon kontrol ediliyor...")
-            
-            try:
-                info_response = requests.get(
-                    f"{config.WORDPRESS_API}",
-                    params={
-                        "action": "plugin_information",
-                        "request[slug]": slug
-                    },
-                    timeout=30
-                )
-                
-                if info_response.status_code == 200:
-                    latest_info = info_response.json()
-                    latest_version = latest_info.get("version")
-                    download_url = latest_info.get("download_link")
-                    
-                    print(f"✅ En son versiyon: {latest_version}")
-                    
-                    # Versiyon güncellemesi var mı kontrol et
-                    if latest_version != plugin["version"]:
-                        print(f"⚠️  Versiyon farkı: {plugin['version']} → {latest_version}")
-                        plugin["version"] = latest_version  # Güncelle
-                else:
-                    # API başarısız olursa mevcut download link'i kullan
-                    download_url = plugin["download_link"]
-                    print(f"⚠️  API'den versiyon alınamadı, mevcut link kullanılıyor")
-            except:
-                download_url = plugin["download_link"]
-                print(f"⚠️  Versiyon kontrolü başarısız, mevcut link kullanılıyor")
-            
-            print(f"⬇️  {plugin['name']} ({plugin['version']}) indiriliyor...")
-            
-            # Plugin'i indir
-            response = requests.get(download_url, timeout=60, stream=True)
-            if response.status_code != 200:
-                print(f"❌ İndirme başarısız: HTTP {response.status_code}")
-                return None
-            
-            # ZIP dosyasını kaydet
-            zip_path = self.work_dir / f"{slug}.zip"
-            with open(zip_path, "wb") as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-            
-            # ZIP'i aç
-            extract_path = self.work_dir / slug
-            extract_path.mkdir(exist_ok=True)
-            
-            with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                zip_ref.extractall(extract_path)
-            
-            # ZIP dosyasını sil (disk tasarrufu)
-            zip_path.unlink()
-            
-            print(f"✅ {plugin['name']} indirildi ve açıldı")
-            return extract_path
-            
-        except Exception as e:
-            print(f"❌ Plugin indirme hatası: {e}")
+        """Plugin EN SON VERSİYONUNU güvenli indir ve zip'ten çıkar"""
+        slug = plugin.get("slug", "")
+        if not slug:
+            print("❌ Plugin slug eksik, indirme atlandı.")
             return None
-    
+
+        try:
+            download_url = plugin.get("download_link", "")
+
+            # API'den güncel versiyon teyidi
+            try:
+                info_resp = requests.get(
+                    config.WORDPRESS_API,
+                    params={"action": "plugin_information", "request[slug]": slug},
+                    timeout=15,
+                    headers={"User-Agent": "WP-Vuln-Scanner/1.0 (Security Research)"}
+                )
+                if info_resp.status_code == 200:
+                    latest_info = info_resp.json()
+                    if isinstance(latest_info, dict) and latest_info.get("download_link"):
+                        download_url = latest_info["download_link"]
+                        plugin["version"] = latest_info.get("version", plugin.get("version", "?"))
+            except Exception:
+                pass  # API teyidi başarısız, mevcut URL'yi kullan
+
+            if not download_url:
+                # Fallback URL'yi dene
+                download_url = f"https://downloads.wordpress.org/plugin/{slug}.zip"
+
+            print(f"⬇️  {plugin.get('name', slug)} ({plugin.get('version', '?')}) indiriliyor...")
+            response = requests.get(
+                download_url,
+                timeout=60,
+                stream=True,
+                headers={"User-Agent": "WP-Vuln-Scanner/1.0 (Security Research)"}
+            )
+            if response.status_code != 200:
+                print(f"❌ İndirme başarısız: HTTP {response.status_code} ({download_url})")
+                return None
+
+            # İçerik tipi kontrolü
+            content_type = response.headers.get("Content-Type", "")
+            if "text/html" in content_type:
+                print(f"❌ İndirme başarısız: Sunucu HTML döndürdü (zip bekleniyor)")
+                return None
+
+            zip_path = self.work_dir / f"{slug}.zip"
+            total_bytes = 0
+            max_bytes = 20 * 1024 * 1024  # 20MB limit
+
+            with open(zip_path, "wb") as f:
+                for chunk in response.iter_content(chunk_size=16384):
+                    f.write(chunk)
+                    total_bytes += len(chunk)
+                    if total_bytes > max_bytes:
+                        print(f"❌ Plugin boyutu 20MB'ı aştı, atlanıyor ({slug})")
+                        zip_path.unlink(missing_ok=True)
+                        return None
+
+            # Geçerli zip dosyası mı kontrol et
+            if not zipfile.is_zipfile(zip_path):
+                print(f"❌ Geçersiz zip dosyası: {slug}")
+                zip_path.unlink(missing_ok=True)
+                return None
+
+            extract_path = self.work_dir / slug
+            if extract_path.exists():
+                shutil.rmtree(extract_path, ignore_errors=True)
+            extract_path.mkdir(exist_ok=True)
+
+            with zipfile.ZipFile(zip_path, "r") as zip_ref:
+                # Zip Slip saldırısına karşı koruma: her dosya yolunu kontrol et
+                for member in zip_ref.namelist():
+                    member_path = extract_path / member
+                    if not str(member_path.resolve()).startswith(str(extract_path.resolve())):
+                        print(f"⚠️ Zip Slip girişimi tespit edildi: {member}")
+                        continue
+                zip_ref.extractall(extract_path)
+
+            zip_path.unlink(missing_ok=True)
+            print(f"✅ {plugin.get('name', slug)} indirildi ve açıldı ({total_bytes // 1024}KB)")
+            return extract_path
+
+        except Exception as e:
+            print(f"❌ Plugin indirme hatası ({slug}): {e}")
+            # Temizlik
+            try:
+                zip_path = self.work_dir / f"{slug}.zip"
+                zip_path.unlink(missing_ok=True)
+                extract_path = self.work_dir / slug
+                if extract_path.exists():
+                    shutil.rmtree(extract_path, ignore_errors=True)
+            except Exception:
+                pass
+            return None
+
     def scan_php_files(self, plugin_path: Path) -> List[Dict]:
-        """Plugin içindeki PHP dosyalarını tara"""
+        """Plugin içindeki PHP dosyalarını akıllı ve güvenli şekilde tara"""
         php_files = []
-        
+        # Üçüncü taraf kütüphaneleri atla (güvenlik hatası değil, bizim kodumuz değil)
+        ignore_dirs = [
+            "vendor/", "node_modules/", "libs/", "libraries/",
+            "third-party/", "assets/", "bower_components/"
+        ]
+        # Yalnızca boilerplate/stub dosyaları atla (içerikleri bizim kodumuz değil)
+        skip_filenames = {"uninstall.php", "index.php", "licence.php", "license.php"}
+        max_file_size = 500 * 1024  # 500KB üzeri minified dosyaları atla
+
         try:
             for php_file in plugin_path.rglob("*.php"):
-                if php_file.is_file():
-                    rel_path_str = str(php_file.relative_to(plugin_path)).replace("\\", "/")
-                    file_name_lower = php_file.name.lower()
+                if not php_file.is_file():
+                    continue
 
-                    # uninstall.php ve boş index.php dosyalarını atla
-                    if file_name_lower in ["uninstall.php", "index.php"]:
+                rel_path = str(php_file.relative_to(plugin_path)).replace("\\", "/")
+                file_name_lower = php_file.name.lower()
+
+                if file_name_lower in skip_filenames:
+                    continue
+                if any(ignored in rel_path.lower() for ignored in ignore_dirs):
+                    continue
+
+                try:
+                    file_size = php_file.stat().st_size
+                except OSError:
+                    continue
+
+                if file_size > max_file_size:
+                    continue
+                if file_size == 0:
+                    continue  # Boş dosyaları atla
+
+                try:
+                    with open(php_file, "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+
+                    # İçerik gerçekten PHP kodu içeriyor mu?
+                    if "<?php" not in content and "<?" not in content:
                         continue
 
-                    # Vendor ve 3. parti kütüphaneleri atla
-                    ignore_dirs = ["vendor/", "node_modules/", "libs/", "libraries/", "third-party/"]
-                    if any(dir_name in rel_path_str.lower() for dir_name in ignore_dirs):
-                        continue
+                    php_files.append({
+                        "path": rel_path,
+                        "content": content,
+                        "size": file_size
+                    })
+                except Exception as read_err:
+                    print(f"⚠️ Dosya okuma hatası ({php_file.name}): {read_err}")
 
-                    # Dosya boyutunu kontrol et (çok büyük dosyaları atla)
-                    if php_file.stat().st_size > 500 * 1024:  # 500KB üzeri
-                        continue
-                    
-                    try:
-                        with open(php_file, "r", encoding="utf-8", errors="ignore") as f:
-                            content = f.read()
-                            
-                        php_files.append({
-                            "path": str(php_file.relative_to(plugin_path)),
-                            "content": content,
-                            "size": php_file.stat().st_size
-                        })
-                    except Exception as e:
-                        print(f"⚠️  Dosya okunamadı: {php_file.name} - {e}")
-                        
         except Exception as e:
-            print(f"❌ PHP dosyaları tarama hatası: {e}")
-        
+            print(f"❌ PHP tarama hatası: {e}")
+
         return php_files
-    
+
     def quick_pattern_scan(self, php_files: List[Dict]) -> Dict:
-        """Hızlı regex tabanlı zafiyet taraması"""
+        """Regex tabanlı şüpheli kod taraması"""
         findings = {}
-        
         for vuln_type, patterns in config.VULNERABILITY_PATTERNS.items():
             findings[vuln_type] = []
-            
             for php_file in php_files:
-                content = php_file["content"]
-                
+                content = php_file.get("content", "")
+                if not content:
+                    continue
                 for pattern in patterns:
-                    matches = re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE)
-                    
-                    for match in matches:
-                        # Satır numarasını bul
-                        line_num = content[:match.start()].count("\n") + 1
-                        
-                        # Eğer CSRF kontrolü yapılıyorsa, bu iyi bir şey (zafiyet değil)
-                        if vuln_type == "CSRF" and ("wp_nonce" in match.group() or "check_admin_referer" in match.group()):
-                            continue
-                        
-                        findings[vuln_type].append({
-                            "file": php_file["path"],
-                            "line": line_num,
-                            "code": match.group(),
-                            "pattern": pattern
-                        })
-        
+                    try:
+                        matches = list(re.finditer(pattern, content, re.IGNORECASE | re.MULTILINE))
+                        for match in matches:
+                            line_num = content[: match.start()].count("\n") + 1
+                            findings[vuln_type].append({
+                                "file": php_file["path"],
+                                "line": line_num,
+                                "code": match.group()[:200],  # Çok uzun eşleşmeleri kırp
+                                "pattern": pattern
+                            })
+                    except re.error as re_err:
+                        print(f"⚠️ Regex hatası ({vuln_type}): {re_err}")
+                        continue
+                    except Exception:
+                        continue
         return findings
-    
-    def cleanup(self, plugin_path: Path, keep=False):
-        """Geçici dosyaları temizle
-        
-        Args:
-            plugin_path: Plugin dizini
-            keep: True ise silme (zafiyet bulundu)
-        """
+
+    def cleanup(self, plugin_path: Path, keep: bool = False):
+        """Geçici dosyaları güvenli temizle"""
         try:
-            import shutil
-            if plugin_path.exists():
+            if plugin_path and plugin_path.exists():
                 if keep:
-                    print(f"💾 Saklandı: {plugin_path.name} (zafiyet var - silinmedi)")
+                    print(f"💾 Saklandı: {plugin_path.name} (zafiyet içeriyor)")
                 else:
-                    shutil.rmtree(plugin_path)
+                    shutil.rmtree(plugin_path, ignore_errors=True)
                     print(f"🧹 Temizlendi: {plugin_path.name}")
         except Exception as e:
-            print(f"⚠️  Temizleme hatası: {e}")
+            print(f"⚠️ Temizleme uyarısı: {e}")

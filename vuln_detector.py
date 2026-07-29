@@ -1,206 +1,253 @@
 """
-AI destekli zafiyet tespit modülü
-GitHub AI Models kullanarak derin analiz yapar
+AI destekli zafiyet tespit ve doğrulama modülü
+GitHub AI Models (gpt-4o) kullanır
 """
 
+import re
 import json
 import time
+import logging
 from typing import List, Dict, Optional
 from openai import OpenAI
 import config
 
+logger = logging.getLogger(__name__)
+
 
 class VulnerabilityDetector:
     def __init__(self):
-        # GitHub AI Models için OpenAI client kullan
         self.client = OpenAI(
-            base_url="https://models.inference.ai.azure.com",
+            base_url=config.GITHUB_API_BASE,
             api_key=config.GITHUB_TOKEN,
         )
         self.model = config.GITHUB_MODEL
-    
+
     def analyze_code_with_ai(self, code_snippet: str, file_path: str) -> Optional[Dict]:
-        """AI ile kod analizi yap"""
-        try:
-            print(f"🤖 AI analizi: {file_path}")
-            
-            # Kod çok uzunsa kısalt (token limiti için)
-            if len(code_snippet) > 4000:
-                code_snippet = code_snippet[:4000] + "\n... (kod kırpıldı) ..."
-            
-            prompt = config.ANALYSIS_PROMPT.format(code=code_snippet)
-            
-            response = self.client.chat.completions.create(
-                model=self.model,
-                messages=[
-                    {"role": "system", "content": "Sen bir WordPress güvenlik uzmanısın. Kod analizi yapıyorsun."},
-                    {"role": "user", "content": prompt}
-                ],
-                temperature=0.3,  # Daha deterministik sonuçlar için
-                max_tokens=2000,
-            )
-            
-            result_text = response.choices[0].message.content
-            
-            # JSON yanıtı parse et
+        """AI ile PHP kod analizi yap (Otomatik Retry ve Kesin JSON Parse)"""
+        print(f"🤖 AI analizi: {file_path}")
+
+        # Token ve sınır limitleri için kodu akıllı kırp
+        if len(code_snippet) > 6000:
+            # İlk 3000 + son 2000 karakteri al (başlangıç ve son kısımlar genellikle önemlidir)
+            code_snippet = code_snippet[:3000] + "\n// ... [orta kısım kırpıldı] ...\n" + code_snippet[-2000:]
+
+        prompt = config.ANALYSIS_PROMPT.format(code=code_snippet)
+
+        max_retries = 3
+        for attempt in range(1, max_retries + 1):
             try:
-                # Markdown kod bloğu içindeyse temizle
-                if "```json" in result_text:
-                    result_text = result_text.split("```json")[1].split("```")[0]
-                elif "```" in result_text:
-                    result_text = result_text.split("```")[1].split("```")[0]
-                
-                # JSON parse et
-                result = json.loads(result_text.strip())
-                return result
-                
-            except json.JSONDecodeError as je:
-                # JSON parse hatası - zafiyet yok kabul et
-                print(f"⚠️  JSON parse hatası - zafiyet yok kabul edildi")
-                return {
-                    "vulnerable": False,
-                    "vulnerabilities": []
-                }
-            except Exception as parse_error:
-                print(f"⚠️  Parse hatası - zafiyet yok kabul edildi")
-                return {
-                    "vulnerable": False,
-                    "vulnerabilities": []
-                }
-                
-        except Exception as e:
-            err_type = type(e).__name__
-            err_msg = str(e)
-            # Rate limit hatası
-            if "429" in err_msg or "rate" in err_msg.lower():
-                print(f"⚠️  AI Rate Limit - 10 saniye bekleniyor...")
-                import time
-                time.sleep(10)
-            elif "401" in err_msg or "unauthorized" in err_msg.lower():
-                print(f"❌ AI Auth Hatası - GitHub Token geçersiz: {err_msg[:100]}")
-            elif "timeout" in err_msg.lower() or "connection" in err_msg.lower():
-                print(f"❌ AI Bağlantı Hatası: {err_msg[:100]}")
-            else:
-                print(f"❌ AI API Hatası ({err_type}): {err_msg[:150]}")
-            return {
-                "vulnerable": False,
-                "vulnerabilities": []
-            }
-    
+                response = self.client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "Sen kıdemli bir WordPress Güvenlik Araştırmacısısın (Exploit Developer). "
+                                "Yalnızca geçerli JSON formatında yanıt verirsin. "
+                                "JSON dışında HİÇBİR ŞEY yazma. "
+                                "Markdown kod bloğu (``` veya ```json) KULLANMA."
+                            )
+                        },
+                        {"role": "user", "content": prompt}
+                    ],
+                    temperature=0.1,
+                    max_tokens=2500,
+                )
+
+                result_text = response.choices[0].message.content.strip()
+
+                # Önce markdown kod bloğunu temizle (```json ... ```)
+                result_text = re.sub(r"^```(?:json)?\s*", "", result_text)
+                result_text = re.sub(r"\s*```$", "", result_text)
+                result_text = result_text.strip()
+
+                # JSON bloğunu çek: en dışta başlayan { ... } bloğunu al
+                json_match = re.search(r"\{.*\}", result_text, re.DOTALL)
+                if json_match:
+                    clean_json_str = json_match.group(0)
+                    try:
+                        result = json.loads(clean_json_str)
+                        return result
+                    except json.JSONDecodeError as je:
+                        print(f"⚠️ JSON parse hatası (Deneme {attempt}/{max_retries}): {je}")
+                        # Hatalı JSON'u yeniden dene
+                        if attempt < max_retries:
+                            time.sleep(2)
+                            continue
+                else:
+                    print(f"⚠️ AI yanıtında JSON bulunamadı (Deneme {attempt}/{max_retries})")
+                    print(f"   AI çıktısı: {result_text[:200]}")
+                    if attempt < max_retries:
+                        time.sleep(2)
+                        continue
+
+            except Exception as e:
+                err_str = str(e)
+                if "429" in err_str or "rate" in err_str.lower():
+                    wait_time = min(30, 8 * attempt)  # Exponential backoff
+                    print(f"⏳ Rate limit (429), {wait_time}s bekleniyor... ({attempt}/{max_retries})")
+                    time.sleep(wait_time)
+                elif "context_length" in err_str.lower() or "token" in err_str.lower():
+                    # Token aşımı: kodu daha fazla kırp ve yeniden dene
+                    print(f"⚠️ Token limiti aşımı, kod kısaltılıyor... ({attempt}/{max_retries})")
+                    code_snippet = code_snippet[:2000]
+                    prompt = config.ANALYSIS_PROMPT.format(code=code_snippet)
+                    time.sleep(1)
+                else:
+                    print(f"⚠️ AI İstek Hatası ({type(e).__name__}): {err_str[:150]}")
+                    time.sleep(2)
+
+        return {"vulnerable": False, "vulnerabilities": []}
+
     def deep_analyze(self, plugin_info: Dict, suspicious_files: List[Dict]) -> Dict:
         """Şüpheli dosyaları derin analiz et"""
         results = {
-            "plugin_name": plugin_info["name"],
-            "plugin_version": plugin_info["version"],
-            "plugin_slug": plugin_info["slug"],
+            "plugin_name": plugin_info.get("name", "Unknown"),
+            "plugin_version": plugin_info.get("version", "?.?.?"),
+            "plugin_slug": plugin_info.get("slug", "unknown"),
             "scan_timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "total_files_analyzed": len(suspicious_files),
             "vulnerabilities_found": [],
             "summary": {}
         }
-        
-        print(f"\n🔍 Derin analiz başlıyor: {plugin_info['name']}")
+
+        print(f"\n🔍 Derin analiz başlıyor: {plugin_info.get('name', 'Unknown')}")
         print(f"📁 {len(suspicious_files)} dosya analiz edilecek\n")
-        
+
         for idx, file_info in enumerate(suspicious_files, 1):
             print(f"[{idx}/{len(suspicious_files)}] Analiz ediliyor: {file_info['path']}")
-            
-            # AI ile analiz
-            ai_result = self.analyze_code_with_ai(
-                file_info["content"],
-                file_info["path"]
-            )
-            
+
+            # Dosya içeriği boşsa atla
+            content = file_info.get("content", "").strip()
+            if not content:
+                print(f"  ⚠️ Dosya içeriği boş, atlanıyor")
+                continue
+
+            ai_result = self.analyze_code_with_ai(content, file_info["path"])
+
             if ai_result and ai_result.get("vulnerable"):
                 for vuln in ai_result.get("vulnerabilities", []):
+                    if not isinstance(vuln, dict):
+                        continue
                     vuln["file"] = file_info["path"]
                     results["vulnerabilities_found"].append(vuln)
-                    
-                    print(f"  🚨 {vuln['severity']} - {vuln['type']}")
-            
-            # Rate limiting için kısa bekleme
-            time.sleep(1)
-        
-        # Özet oluştur
-        if results["vulnerabilities_found"]:
-            severity_count = {}
-            type_count = {}
-            
-            for vuln in results["vulnerabilities_found"]:
-                severity = vuln["severity"]
-                vuln_type = vuln["type"]
-                
-                severity_count[severity] = severity_count.get(severity, 0) + 1
-                type_count[vuln_type] = type_count.get(vuln_type, 0) + 1
-            
-            results["summary"] = {
-                "by_severity": severity_count,
-                "by_type": type_count,
-                "total_vulnerabilities": len(results["vulnerabilities_found"])
-            }
-        
+                    print(f"  🚨 {vuln.get('severity', 'High')} - {vuln.get('type', 'Unknown')}")
+
+            # Her dosya arası rate limit koruması
+            if idx < len(suspicious_files):
+                time.sleep(1.5)
+
         return results
-    
+
     def verify_vulnerability(self, vulnerability: Dict) -> bool:
-        """Zafiyetin gerçek ve Wordfence Bug Bounty kriterlerine uygunluğunu doğrula"""
-        severity = vulnerability.get("severity", "Low")
-        cvss_score = float(vulnerability.get("cvss_score", 0))
-        vuln_code = vulnerability.get("vulnerable_code", "")
-        desc = vulnerability.get("description", "").lower()
+        """Zafiyetin GERÇEK VE WORDFENCE KRİTERLERİNE UYGUNLUĞUNU SU SIZDIRMAZ ŞEKİLDE DOĞRULA"""
+        try:
+            cvss_raw = vulnerability.get("cvss_score", 0)
+            # cvss_score bazen "9.8" gibi string gelebilir
+            try:
+                cvss_score = float(cvss_raw) if cvss_raw else 0.0
+            except (ValueError, TypeError):
+                cvss_score = 0.0
 
-        # 1. uninstall veya kaldırma dosyası ise reddet
-        loc = vulnerability.get("location", "").lower()
-        if "uninstall" in loc or "uninstall.php" in desc:
+            vuln_code = str(vulnerability.get("vulnerable_code", "")).strip()
+            desc = str(vulnerability.get("description", "")).lower()
+            loc = str(vulnerability.get("location", "")).lower()
+            vuln_type = str(vulnerability.get("type", "")).lower()
+            exploit_scenario = str(vulnerability.get("exploit_scenario", "")).lower()
+
+            # 1. uninstall.php veya silme işlemleri KESİNLİKLE REDDEDİLİR
+            if "uninstall" in loc or "uninstall.php" in desc or "uninstall.php" in vuln_code.lower():
+                print(f"  🚫 Reddedildi: uninstall.php içeriyor")
+                return False
+
+            # 2. Zafiyetli kod parçası verilmemişse uydurmadır, REDDET
+            if not vuln_code or len(vuln_code) < 5:
+                print(f"  🚫 Reddedildi: Zafiyetli kod eksik")
+                return False
+
+            # 3. Wordfence Bug Bounty barajı: CVSS skoru en az 7.0 olmalı
+            if cvss_score < 7.0:
+                print(f"  🚫 Reddedildi: CVSS {cvss_score} < 7.0")
+                return False
+
+            # 4. Kodda Dışarıdan Kullanıcı Girdisi Bağı Olmak Zorundadır
+            user_inputs = [
+                "$_get", "$_post", "$_request", "$_cookie",
+                "$_files", "php://input", "rest_base",
+                "get_param", "sanitize_", "wp_unslash"
+            ]
+            has_direct_input = any(inp in vuln_code.lower() for inp in user_inputs)
+            has_desc_input = (
+                any(inp in desc for inp in ["$_get", "$_post", "$_request"]) or
+                "unauthenticated" in desc or
+                "user input" in desc or
+                "missing authorization" in desc or
+                "no authentication" in desc or
+                "unauthorized" in desc or
+                "unauthenticated" in exploit_scenario or
+                "unauthenticated" in vuln_type
+            )
+
+            if not (has_direct_input or has_desc_input):
+                print(f"  🚫 Reddedildi: Kullanıcı girdisi bağı yok")
+                return False
+
+            # 5. Kodda Temizleme/Koruma Fonksiyonu Varsa REDDET (False Positive Koruması)
+            # NOT: $wpdb->prepare varsa TEK BAŞINA reddetme; ek bypass olup olmadığına bak
+            full_sanitizers = [
+                "sanitize_text_field", "esc_html", "esc_attr",
+                "intval(", "(int)", "absint(",
+                "wp_verify_nonce",
+            ]
+            # Sadece tam korumayı reddet
+            if all(san in vuln_code for san in ["$wpdb->prepare"]) and not any(
+                bypass in vuln_code.lower() for bypass in ["$_get", "$_post", "$_request", "$_cookie"]
+            ):
+                print(f"  🚫 Reddedildi: wpdb->prepare ile koruma var ve kullanıcı girdisi yoktur")
+                return False
+
+            # Tüm sanitizer'lar bir arada varsa (birden fazla savunma katmanı) reddet
+            sanitizer_count = sum(1 for s in full_sanitizers if s in vuln_code)
+            if sanitizer_count >= 2:
+                print(f"  🚫 Reddedildi: {sanitizer_count} sanitizer/escape fonksiyonu var")
+                return False
+
+            return True
+
+        except Exception as e:
+            print(f"⚠️ Zafiyet doğrulama hatası: {e}")
             return False
 
-        # 2. Zafiyetli kod parçası boşsa reddet
-        if not vuln_code or len(vuln_code.strip()) < 5:
-            return False
-
-        # 3. CVSS skoru 7.0 ve üzeri olmalı (Wordfence Bounty Eşiği)
-        if cvss_score < 7.0:
-            return False
-
-        # 4. Kod içerisinde kullanıcı girdisi var mı kontrol et
-        user_inputs = ["$_get", "$_post", "$_request", "$_cookie", "$_files", "php://input", "rest_base", "request["]
-        code_has_input = any(inp in vuln_code.lower() for inp in user_inputs)
-        desc_has_input = any(inp in desc for inp in user_inputs) or "user input" in desc or "unsanitized" in desc or "unauthenticated" in desc or "missing authorization" in desc
-
-        if not (code_has_input or desc_has_input):
-            return False
-
-        return True
-    
     def filter_high_confidence_vulns(self, results: Dict) -> Dict:
-        """Sadece yüksek güvenirlikli zafiyetleri filtrele"""
+        """Sadece su sızdırmaz doğrulanmış zafiyetleri tut"""
         verified_vulns = []
-        
-        for vuln in results["vulnerabilities_found"]:
+        total_before = len(results.get("vulnerabilities_found", []))
+
+        for vuln in results.get("vulnerabilities_found", []):
             if self.verify_vulnerability(vuln):
                 verified_vulns.append(vuln)
-        
+
+        filtered_count = total_before - len(verified_vulns)
+        if filtered_count > 0:
+            print(f"🔎 {filtered_count} False Positive filtrelendi. {len(verified_vulns)} gerçek zafiyet kaldı.")
+
         results["vulnerabilities_found"] = verified_vulns
-        
-        # Özeti güncelle
+
         if verified_vulns:
             severity_count = {}
             type_count = {}
-            
             for vuln in verified_vulns:
-                severity = vuln["severity"]
-                vuln_type = vuln["type"]
-                
-                severity_count[severity] = severity_count.get(severity, 0) + 1
-                type_count[vuln_type] = type_count.get(vuln_type, 0) + 1
-            
+                sev = vuln.get("severity", "High")
+                v_type = vuln.get("type", "Security Finding")
+                severity_count[sev] = severity_count.get(sev, 0) + 1
+                type_count[v_type] = type_count.get(v_type, 0) + 1
+
             results["summary"] = {
                 "by_severity": severity_count,
                 "by_type": type_count,
                 "total_vulnerabilities": len(verified_vulns)
             }
         else:
-            results["summary"] = {
-                "total_vulnerabilities": 0
-            }
-        
+            results["summary"] = {"total_vulnerabilities": 0}
+
         return results
