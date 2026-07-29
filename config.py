@@ -30,15 +30,14 @@ WORDPRESS_API = "https://api.wordpress.org/plugins/info/1.2/"
 # Filtreleme Kriterleri (ZAFİYET ARAMA STRATEJİSİ)
 FILTER_CRITERIA = {
     # Az popüler pluginler (daha az incelenmiş olabilir)
-    "max_active_installs": 100000,  # 50K → 100K (daha geniş)
-    "min_active_installs": 50,      # 100 → 50 (daha düşük)
+    "max_active_installs": 100000,
+    "min_active_installs": 50,
     
     # Eski pluginler (güncellenmeyen = zafiyet riski yüksek)
-    "min_months_since_update": 2,   # 3 → 2 ay (daha yeni olanlar dahil)
-    "max_months_since_update": 60,  # 48 → 60 ay (5 yıl, daha eski)
+    "min_months_since_update": 2,
+    "max_months_since_update": 60,
     
-    # Rating filtresi (çok kötü ratingli olanları atla - zaten kullanılmıyor)
-    "min_rating": 20,  # 50 → 20 (çok daha geniş)
+    "min_rating": 20,
     
     # Daha önce zafiyet bulunan kategoriler (öncelik ver)
     "prioritize_categories": [
@@ -53,8 +52,8 @@ FILTER_CRITERIA = {
     ]
 }
 
-# Taranan pluginleri takip et (aynı plugini tekrar taramayı önle)
-TRACK_SCANNED_PLUGINS = True  # False yaparsanız her seferinde tüm pluginleri tarar
+# Taranan pluginleri takip et
+TRACK_SCANNED_PLUGINS = True
 
 # Analiz edilecek zafiyet türleri
 VULNERABILITY_PATTERNS = {
@@ -99,34 +98,44 @@ VULNERABILITY_PATTERNS = {
     ],
 }
 
-# AI Analiz Prompts
-ANALYSIS_PROMPT = """Sen kıdemli bir WordPress Güvenlik Denetçisisin (Senior Vulnerability Researcher).
-Aşağıdaki WordPress plugin PHP kodunu incele.
+# AI Analiz Prompts (Katı ve Gerçekçi Sızma Testi Kuralları)
+ANALYSIS_PROMPT = """Sen dünyaca ünlü, halüsinasyon görmeyen, acımasız bir WordPress Güvenlik Araştırmacısısın (Senior Exploit Developer).
 
-⚠️ ÖNEMLİ KURALLAR:
-1. 'uninstall.php' veya eklenti silme kodları zafiyet DEĞİLDİR.
-2. Kullanıcıdan gelen bir girdi ($_GET, $_POST, $_REQUEST, $_COOKIE, php://input) doğrudan güvenilmez bir şekilde SQL, echo/print, eval, include veya dosya işlemine GİRMİYORSA zafiyet YOKTUR.
-3. $wpdb->prepare() kullanılmışsa SQL Injection YOKTUR.
-4. esc_attr(), esc_html(), sanitize_text_field() kullanılmışsa XSS YOKTUR.
-5. Sadece ve sadece GERÇEK, İSTİSMAR EDİLEBİLİR (exploitable) güvenlik açıklarını raporla. Şüphe duyuyorsan "vulnerable: false" ver.
+GÖREV: Aşağıdaki PHP kodunda SADECE VE SADECE GERÇEK, DIŞARIDAN İSTİSMAR EDİLEBİLİR (REAL WORLD EXPLOITABLE) zafiyetleri tespit et.
+
+🔴 NELER ZAFİYET DEĞİLDİR? (BUNLARI KESİNLİKLE ATLA - VULNERABLE: FALSE VER):
+1. Eklenti silme (`uninstall.php`), veritabanı tablosu temizleme (`DROP TABLE`, `DELETE FROM`) kodları ZAFİYET DEĞİLDİR.
+2. Sadece Yönetici (Administrator/is_admin) yetkisindeki rutin admin işlemleri ZAFİYET DEĞİLDİR.
+3. Dışarıdan kullanıcı girdisi ($_GET, $_POST, $_REQUEST, $_COOKIE, php://input) İÇERMEYEN kodlar ZAFİYET DEĞİLDİR.
+4. $wpdb->prepare(), esc_sql(), intval(), (int), sanitize_text_field(), esc_html(), esc_attr() veya wp_verify_nonce() ile korunan kodlar ZAFİYET DEĞİLDİR.
+5. Sabit stringler veya sadece fonksiyon tanımları ZAFİYET DEĞİLDİR.
+
+🟢 GERÇEK ZAFİYET NEDİR? (SADECE BUNLARI RAPORLA):
+1. Unauthenticated (Giriş yapmamış) veya Low-Privilege (Abone/Subscriber) kullanıcının dışarıdan göndereceği girdiyle SQL sorgusunu değiştirebilmesi (SQL Injection).
+2. Dışarıdan gelen girdinin süzülmeden ekrana basılması ve başka kullanıcının oturumunu çalabilmesi (Reflected / Stored XSS).
+3. Yetkisiz kullanıcının kritik admin fonksiyonlarını tetikleyebilmesi (Broken Access Control / Missing Nonce Check / Unauthenticated AJAX).
+4. Dışarıdan dosya yükleyip PHP kodu çalıştırabilmesi (Arbitrary File Upload / RCE).
+5. Dışarıdan gönderilen yol parametresiyle sistem dosyalarının okunabilmesi (Path Traversal / LFI).
+
+Şüphen varsa veya %100 emin değilsen "vulnerable: false" yanıtı ver. Şişirme veya uydurma rapor KABUL EDİLEMEZ.
 
 Kod:
 {code}
 
-Yanıtlama formatı (SADECE geçerli JSON ver):
+Yanıtlama formatı (SADECE GEÇERLİ JSON):
 {{
     "vulnerable": true/false,
     "vulnerabilities": [
         {{
-            "type": "zafiyet türü (örn: Unauthenticated SQL Injection)",
-            "severity": "Critical/High/Medium/Low",
-            "cvss_score": 0.0-10.0,
+            "type": "Zafiyet Türü (Örn: Unauthenticated SQL Injection)",
+            "severity": "Critical/High",
+            "cvss_score": 7.5-10.0,
             "location": "dosya:satır",
-            "vulnerable_code": "zafiyete sebep olan 1-3 satırlık kod parçası",
-            "description": "Zafiyetin detaylı teknik açıklaması",
-            "exploit_scenario": "Adım adım istismar senaryosu",
-            "poc_command": "Manuel test için cURL veya HTTP isteği örneği",
-            "recommendation": "Geliştirici için kesin kod düzeltme önerisi"
+            "vulnerable_code": "Zafiyete sebep olan tam PHP kod satırı",
+            "description": "Zafiyetin GERÇEK VE TEKNİK açıklaması",
+            "exploit_scenario": "Saldırganın dışarıdan göndereceği istek ve parametreler",
+            "poc_command": "Gerçek cURL testi örneği (Örn: curl -X POST ...)",
+            "recommendation": "Geliştirici için kesin yama önerisi"
         }}
     ]
 }}"""
