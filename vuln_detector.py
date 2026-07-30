@@ -33,15 +33,110 @@ class VulnerabilityDetector:
             except Exception as e:
                 logger.warning(f"Gemini API istemcisi başlatılamadı: {e}")
 
+    def _split_code_for_analysis(self, code: str, max_chars: int = 5500, overlap: int = 500) -> List[str]:
+        """Büyük dosyaları ortasını kaybetmeden, örtüşen parçalara böl."""
+        code = code.strip()
+        if len(code) <= max_chars:
+            return [code]
+
+        chunks = []
+        start = 0
+        while start < len(code):
+            end = min(start + max_chars, len(code))
+            if end < len(code):
+                newline_pos = code.rfind("\n", start, end)
+                if newline_pos > start + max_chars // 2:
+                    end = newline_pos
+
+            chunks.append(code[start:end])
+            if end >= len(code):
+                break
+            start = max(0, end - overlap)
+
+        return chunks
+
+    def _build_evidence_context(self, code: str, file_path: str) -> str:
+        """AI'a dosyanın güvenlik sinyallerini kısa ve kanıtlı şekilde ver."""
+        checks = {
+            "public_ajax": r"add_action\s*\(\s*['\"]wp_ajax_nopriv_([^'\"]+)",
+            "ajax": r"add_action\s*\(\s*['\"]wp_ajax_([^'\"]+)",
+            "admin_post_public": r"add_action\s*\(\s*['\"]admin_post_nopriv_([^'\"]+)",
+            "rest_route": r"register_rest_route\s*\(",
+            "shortcode": r"add_shortcode\s*\(",
+            "user_input": r"\$_(GET|POST|REQUEST|COOKIE|FILES)|php://input|get_param\s*\(",
+            "dangerous_sink": (
+                r"\$wpdb->(query|get_results|get_row|get_var)\s*\(|"
+                r"file_get_contents\s*\(|file_put_contents\s*\(|unlink\s*\(|"
+                r"include(?:_once)?\s*\(|require(?:_once)?\s*\(|"
+                r"eval\s*\(|system\s*\(|exec\s*\(|shell_exec\s*\(|"
+                r"wp_remote_(get|post)\s*\(|wp_redirect\s*\("
+            ),
+            "nonce_check": r"wp_verify_nonce\s*\(|check_ajax_referer\s*\(",
+            "capability_check": r"current_user_can\s*\(|is_admin\s*\(",
+            "sanitizer": r"sanitize_[a-zA-Z0-9_]+\s*\(|esc_(html|attr|url|js)\s*\(|intval\s*\(|absint\s*\(|\$wpdb->prepare\s*\(",
+        }
+
+        lines = code.splitlines()
+
+        def sample(pattern: str, limit: int = 6) -> List[str]:
+            hits = []
+            for line_no, line in enumerate(lines, 1):
+                if re.search(pattern, line, re.IGNORECASE):
+                    clean = line.strip()
+                    if len(clean) > 180:
+                        clean = clean[:177] + "..."
+                    hits.append(f"L{line_no}: {clean}")
+                    if len(hits) >= limit:
+                        break
+            return hits
+
+        found = {name: sample(pattern) for name, pattern in checks.items()}
+        risk_score = 0
+        if found["public_ajax"] or found["admin_post_public"]:
+            risk_score += 35
+        if found["rest_route"]:
+            risk_score += 25
+        if found["user_input"]:
+            risk_score += 25
+        if found["dangerous_sink"]:
+            risk_score += 30
+        if not found["nonce_check"]:
+            risk_score += 10
+        if not found["capability_check"]:
+            risk_score += 10
+        if found["sanitizer"]:
+            risk_score -= 15
+        risk_score = max(0, min(100, risk_score))
+
+        sections = [
+            "=== OTOMATİK KANIT ÖZETİ ===",
+            f"Dosya: {file_path}",
+            f"Yerel risk skoru: {risk_score}/100",
+        ]
+        for label, key in [
+            ("Public AJAX", "public_ajax"),
+            ("AJAX", "ajax"),
+            ("Public admin_post", "admin_post_public"),
+            ("REST route", "rest_route"),
+            ("Shortcode", "shortcode"),
+            ("Kullanıcı girdisi", "user_input"),
+            ("Tehlikeli sink", "dangerous_sink"),
+            ("Nonce kontrolu", "nonce_check"),
+            ("Yetki kontrolu", "capability_check"),
+            ("Sanitizer/escape", "sanitizer"),
+        ]:
+            values = found[key]
+            sections.append(f"{label}:")
+            sections.extend([f"- {value}" for value in values] if values else ["- Yok"])
+
+        sections.append("=== KOD ===")
+        return "\n".join(sections) + "\n" + code
+
     def analyze_code_with_ai(self, code_snippet: str, file_path: str) -> Optional[Dict]:
         """AI ile PHP kod analizi yap (Otomatik Retry ve Kesin JSON Parse)"""
         print(f"🤖 AI analizi: {file_path}")
 
-        # Token ve sınır limitleri için kodu akıllı kırp
-        if len(code_snippet) > 6000:
-            # İlk 3000 + son 2000 karakteri al (başlangıç ve son kısımlar genellikle önemlidir)
-            code_snippet = code_snippet[:3000] + "\n// ... [orta kısım kırpıldı] ...\n" + code_snippet[-2000:]
-
+        code_snippet = self._build_evidence_context(code_snippet, file_path)
         prompt = config.ANALYSIS_PROMPT.format(code=code_snippet)
 
         max_retries = 3
@@ -100,8 +195,8 @@ class VulnerabilityDetector:
                     time.sleep(wait_time)
                 elif "context_length" in err_str.lower() or "token" in err_str.lower():
                     # Token aşımı: kodu daha fazla kırp ve yeniden dene
-                    print(f"⚠️ Token limiti aşımı, kod kısaltılıyor... ({attempt}/{max_retries})")
-                    code_snippet = code_snippet[:2000]
+                    print(f"⚠️ Token limiti aşımı, parça küçültülüyor... ({attempt}/{max_retries})")
+                    code_snippet = code_snippet[: max(1500, len(code_snippet) // 2)]
                     prompt = config.ANALYSIS_PROMPT.format(code=code_snippet)
                     time.sleep(1)
                 else:
@@ -119,6 +214,8 @@ class VulnerabilityDetector:
             "scan_timestamp": time.strftime("%Y-%m-%d %H:%M:%S"),
             "total_files_analyzed": len(suspicious_files),
             "vulnerabilities_found": [],
+            "needs_manual_review": [],
+            "rejected_findings": [],
             "summary": {}
         }
 
@@ -134,15 +231,38 @@ class VulnerabilityDetector:
                 print(f"  ⚠️ Dosya içeriği boş, atlanıyor")
                 continue
 
-            ai_result = self.analyze_code_with_ai(content, file_info["path"])
+            code_chunks = self._split_code_for_analysis(content)
+            seen_vulns = set()
 
-            if ai_result and ai_result.get("vulnerable"):
-                for vuln in ai_result.get("vulnerabilities", []):
-                    if not isinstance(vuln, dict):
-                        continue
-                    vuln["file"] = file_info["path"]
-                    results["vulnerabilities_found"].append(vuln)
-                    print(f"  🚨 {vuln.get('severity', 'High')} - {vuln.get('type', 'Unknown')}")
+            for chunk_idx, chunk in enumerate(code_chunks, 1):
+                chunk_label = file_info["path"]
+                if len(code_chunks) > 1:
+                    chunk_label = f"{file_info['path']} (parça {chunk_idx}/{len(code_chunks)})"
+
+                ai_result = self.analyze_code_with_ai(chunk, chunk_label)
+
+                if ai_result and ai_result.get("vulnerable"):
+                    for vuln in ai_result.get("vulnerabilities", []):
+                        if not isinstance(vuln, dict):
+                            continue
+
+                        dedupe_key = (
+                            str(vuln.get("type", "")),
+                            str(vuln.get("location", "")),
+                            str(vuln.get("vulnerable_code", ""))[:200],
+                        )
+                        if dedupe_key in seen_vulns:
+                            continue
+                        seen_vulns.add(dedupe_key)
+
+                        vuln["file"] = file_info["path"]
+                        if len(code_chunks) > 1:
+                            vuln["analysis_chunk"] = f"{chunk_idx}/{len(code_chunks)}"
+                        results["vulnerabilities_found"].append(vuln)
+                        print(f"  BULGU: {vuln.get('severity', 'High')} - {vuln.get('type', 'Unknown')}")
+
+                if chunk_idx < len(code_chunks):
+                    time.sleep(1.0)
 
             # Her dosya arası rate limit koruması
             if idx < len(suspicious_files):
@@ -250,6 +370,10 @@ class VulnerabilityDetector:
     def verify_vulnerability_with_gemini(self, vuln: Dict) -> bool:
         """2. Aşama Hakem: Google Gemini 2.5/3.5 Flash ile zafiyeti sert bir Pentester gözüyle doğrula"""
         if not self.gemini_client:
+            if config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_api_key_here":
+                print("🚫 Gemini API anahtarı var ama istemci başlatılamadı; zafiyet onaylanmadı.")
+                return False
+            print("⚠️ Gemini API anahtarı yok; yalnızca yerel doğrulama kuralları kullanıldı.")
             return True
 
         print(f"⚖️ Gemini AI Hakemi zafiyeti inceliyor: {vuln.get('type', 'Unknown')}...")
@@ -295,16 +419,18 @@ class VulnerabilityDetector:
                     print(f"🚫 Gemini AI Hakemi REDDETTİ (False Positive): {reason}")
                     return False
             else:
-                print("⚠️ Gemini yanıtından JSON alınamadı, Varsayılan kabul edildi.")
-                return True
+                print("🚫 Gemini yanıtından JSON alınamadı; zafiyet onaylanmadı.")
+                return False
 
         except Exception as e:
-            print(f"⚠️ Gemini AI Hakemi doğrulama hatası ({e}), ilk karar korundu.")
-            return True
+            print(f"🚫 Gemini AI Hakemi doğrulama hatası ({e}); zafiyet onaylanmadı.")
+            return False
 
     def filter_high_confidence_vulns(self, results: Dict) -> Dict:
         """Sadece su sızdırmaz doğrulanmış zafiyetleri tut"""
         verified_vulns = []
+        manual_review = []
+        rejected_findings = []
         total_before = len(results.get("vulnerabilities_found", []))
 
         for vuln in results.get("vulnerabilities_found", []):
@@ -312,13 +438,25 @@ class VulnerabilityDetector:
             if self.verify_vulnerability(vuln):
                 # 2. Aşama: Google Gemini AI Hakem Doğrulaması
                 if self.verify_vulnerability_with_gemini(vuln):
+                    vuln["review_status"] = "confirmed_candidate"
                     verified_vulns.append(vuln)
+                else:
+                    vuln["review_status"] = "needs_manual_review"
+                    vuln["review_reason"] = "Yerel kuralları geçti ama Gemini onayı alınamadı."
+                    manual_review.append(vuln)
+            else:
+                vuln["review_status"] = "rejected"
+                rejected_findings.append(vuln)
 
-        filtered_count = total_before - len(verified_vulns)
+        filtered_count = total_before - len(verified_vulns) - len(manual_review)
         if filtered_count > 0:
-            print(f"🔎 {filtered_count} False Positive filtrelendi. {len(verified_vulns)} gerçek zafiyet kaldı.")
+            print(f"🔎 {filtered_count} False Positive filtrelendi. {len(verified_vulns)} onaylı aday kaldı.")
+        if manual_review:
+            print(f"🟡 {len(manual_review)} bulgu manuel incelemeye ayrıldı.")
 
         results["vulnerabilities_found"] = verified_vulns
+        results["needs_manual_review"] = manual_review
+        results["rejected_findings"] = rejected_findings
 
         if verified_vulns:
             severity_count = {}
@@ -332,9 +470,15 @@ class VulnerabilityDetector:
             results["summary"] = {
                 "by_severity": severity_count,
                 "by_type": type_count,
-                "total_vulnerabilities": len(verified_vulns)
+                "total_vulnerabilities": len(verified_vulns),
+                "needs_manual_review": len(manual_review),
+                "rejected_findings": len(rejected_findings)
             }
         else:
-            results["summary"] = {"total_vulnerabilities": 0}
+            results["summary"] = {
+                "total_vulnerabilities": 0,
+                "needs_manual_review": len(manual_review),
+                "rejected_findings": len(rejected_findings)
+            }
 
         return results
