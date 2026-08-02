@@ -30,14 +30,14 @@ print()
 print("📋 Yapılandırma Kontrolleri:")
 print("-" * 60)
 
-# 1. GitHub Token kontrolü
-print("\n1️⃣  GitHub AI Models Token...")
-if not config.GITHUB_TOKEN or config.GITHUB_TOKEN == "your_github_token_here":
+# 1. Birincil AI Sağlayıcı kontrolü
+print(f"\n1️⃣  Birincil AI Sağlayıcı ({config.PRIMARY_PROVIDER}) Token...")
+if not config.PRIMARY_API_KEY or config.PRIMARY_API_KEY in ("", "your_github_token_here", "your_gemini_api_key_here"):
     print("   ❌ Token ayarlanmamış!")
-    print("   → .env veya config.py dosyasını düzenleyin")
+    print("   → .env dosyasında GITHUB_TOKEN veya GEMINI_API_KEY düzenleyin")
     sys.exit(1)
 else:
-    token_display = config.GITHUB_TOKEN[:10] + "..." if len(config.GITHUB_TOKEN) > 10 else config.GITHUB_TOKEN
+    token_display = config.PRIMARY_API_KEY[:10] + "..." if len(config.PRIMARY_API_KEY) > 10 else config.PRIMARY_API_KEY
     print(f"   ✅ Token bulundu: {token_display}")
     
     # API testi
@@ -45,25 +45,31 @@ else:
         print("   🔄 API bağlantısı test ediliyor...")
         from openai import OpenAI
         client = OpenAI(
-            base_url=config.GITHUB_API_BASE,
-            api_key=config.GITHUB_TOKEN,
+            base_url=config.PRIMARY_API_BASE,
+            api_key=config.PRIMARY_API_KEY,
         )
         
         response = client.chat.completions.create(
-            model=config.GITHUB_MODEL,
+            model=config.PRIMARY_MODEL,
             messages=[
                 {"role": "user", "content": "Merhaba, test"}
             ],
             max_tokens=10
         )
         
-        print("   ✅ GitHub AI Models API çalışıyor!")
-        print(f"   📊 Model: {config.GITHUB_MODEL}")
+        print(f"   ✅ {config.PRIMARY_PROVIDER} API çalışıyor!")
+        print(f"   📊 Model: {config.PRIMARY_MODEL}")
         
     except Exception as e:
         print(f"   ❌ API hatası: {e}")
-        print("   → Token'ı kontrol edin: https://github.com/marketplace/models")
+        print(f"   → {config.PRIMARY_PROVIDER} için anahtarı kontrol edin")
         sys.exit(1)
+
+print("\n   🔹 İkincil Doğrulayıcı (Hakem):")
+if config.SECONDARY_API_KEY:
+    print(f"   ✅ {config.SECONDARY_PROVIDER} hazır (model: {config.SECONDARY_MODEL})")
+else:
+    print("   ⚠️ İkincil sağlayıcı anahtarı yok — yalnızca yerel doğrulama kullanılacak")
 
 # 2. Telegram Bot kontrolü
 print("\n2️⃣  Telegram Bot Token...")

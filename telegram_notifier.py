@@ -6,6 +6,7 @@ Bulunan zafiyetleri Telegram üzerinden detaylı şekilde bildirir
 
 import asyncio
 import html
+from datetime import datetime
 from typing import Dict
 from telegram import Bot
 from telegram.error import TelegramError
@@ -188,6 +189,54 @@ class TelegramNotifier:
         )
         self.send_message(message)
 
+    def send_critical_alert(self, alert_type: str, message: str, details: str = ""):
+        """🚨 KRİTİK UYARI - Sistem sorunu"""
+        alert_message = (
+            f"🚨 <b>KRİTİK UYARI!</b> 🚨\n\n"
+            f"<b>Tip:</b> {self._escape(alert_type)}\n"
+            f"<b>Mesaj:</b> {self._escape(message)}\n"
+        )
+        
+        if details:
+            alert_message += f"\n<b>Detaylar:</b>\n{self._escape(details)}\n"
+        
+        alert_message += (
+            f"\n<b>Zaman:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
+            f"\n⚠️ <b>HEMEN KONTROL EDİN!</b>"
+        )
+        
+        success = self.send_message(alert_message)
+        if success:
+            print(f"🚨 Kritik uyarı gönderildi: {alert_type}")
+        return success
+    
+    def send_system_status(self, status: str, issues: list, warnings: list):
+        """Sistem durumu raporu"""
+        emoji = "🟢" if status == "HEALTHY" else "🟡" if status == "WARNING" else "🔴"
+        
+        message = (
+            f"{emoji} <b>Sistem Durumu: {self._escape(status)}</b>\n\n"
+        )
+        
+        if issues:
+            message += "<b>❌ Kritik Sorunlar:</b>\n"
+            for issue in issues[:5]:  # İlk 5'i
+                message += f"• {self._escape(issue)}\n"
+            if len(issues) > 5:
+                message += f"<i>... ve {len(issues) - 5} sorun daha</i>\n"
+            message += "\n"
+        
+        if warnings:
+            message += "<b>⚠️ Uyarılar:</b>\n"
+            for warning in warnings[:5]:
+                message += f"• {self._escape(warning)}\n"
+            if len(warnings) > 5:
+                message += f"<i>... ve {len(warnings) - 5} uyarı daha</i>\n"
+        
+        message += f"\n<b>Zaman:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}"
+        
+        return self.send_message(message)
+
     def send_scan_complete(self, total_plugins: int, vulns_found: int):
         """Tarama tamamlanma bildirimi"""
         result_text = "🎉 Doğrulanmış zafiyet(ler) bulundu!" if vulns_found > 0 else "Tüm tarama tamamlandı."
@@ -198,3 +247,7 @@ class TelegramNotifier:
             f"{result_text}"
         )
         self.send_message(message)
+    
+    def send_progress_update(self, progress_report: str):
+        """İlerleme güncellemesi (progress tracker'dan)"""
+        return self.send_message(progress_report)

@@ -1,20 +1,13 @@
 #!/usr/bin/env python3
 """
-WordPress Plugin Vulnerability Scanner v4.1 - Production Ready
+WordPress Plugin Vulnerability Scanner v3.0 - Taint Analysis Engine
 Ana tarama scripti
 
-v4.1 Değişiklikleri:
-- ✅ Parallel scanning (3x-9x hız artışı)
-- ✅ False positive learning (self-improving)
-- ✅ Mobile-friendly Telegram bot
-- ✅ Optimized scanning (15 plugins/batch)
-
-v4.0 Özellikler:
-- ✅ Structured logging (rotating, JSON audit)
-- ✅ SQLite database (hafif, 1.5GB RAM friendly)
-- ✅ Rate limiting (exponential backoff, circuit breaker)
-- ✅ Taint Analysis Engine (TRUE POSITIVE motoru)
-- ✅ Ultra strict validation (10 layers)
+v3.0 Değişiklikleri:
+- Taint Analysis Engine (TRUE POSITIVE motoru)
+- AI artık koddan zafiyet UYDURMUYOR, taint flow'ları DOĞRULUYOR
+- Maksimum batch limiti (sonsuz döngü koruması)
+- PoC doğrulama desteği (Docker)
 
 Kullanım:
     python3 scanner.py              # Normal tarama
@@ -33,36 +26,10 @@ from pathlib import Path
 from datetime import datetime
 
 import config
-from logger import get_logger
-from database import get_db
-from rate_limiter import get_rate_limiter
 from plugin_analyzer import PluginAnalyzer
 from vuln_detector import VulnerabilityDetector
 from telegram_notifier import TelegramNotifier
 from taint_analyzer import TaintAnalyzer
-from progress_tracker import get_tracker
-
-# Setup logging (ÖNCE BUNLAR!)
-logger = get_logger("scanner")
-db = get_db()
-tracker = get_tracker()
-
-# v4.1 YENİ: Parallel scanning ve FP learning (logger hazır olduktan SONRA)
-if config.ENABLE_PARALLEL_SCAN:
-    from parallel_scanner import get_parallel_scanner
-    parallel_scanner = get_parallel_scanner(config.MAX_PARALLEL_WORKERS)
-    logger.info(f"Parallel scanning aktif ({config.MAX_PARALLEL_WORKERS} workers)")
-else:
-    parallel_scanner = None
-    logger.info("Parallel scanning devre dışı (sequential mode)")
-
-if config.ENABLE_FP_LEARNING:
-    from false_positive_learner import get_learner
-    fp_learner = get_learner()
-    logger.info(f"FP Learning aktif ({len(fp_learner.patterns)} pattern)")
-else:
-    fp_learner = None
-    logger.info("FP Learning devre dışı")
 
 # Opsiyonel: bilinen CVE eşleştirme (NVD)
 try:
@@ -102,11 +69,11 @@ def is_bot_running() -> bool:
 def start_telegram_bot():
     """Telegram botunu bağımsız (detached) arka plan süreci olarak başlat"""
     if not config.TELEGRAM_BOT_TOKEN or config.TELEGRAM_BOT_TOKEN == "your_telegram_bot_token_here":
-        logger.warning("Telegram bot token tanımlanmadığı için bot başlatılamadı.")
+        print("⚠️ Telegram bot token tanımlanmadığı için bot başlatılamadı.")
         return
 
     if is_bot_running():
-        logger.info("Telegram Bot & AI Asistanı zaten arka planda çalışıyor!")
+        print("🤖 Telegram Bot & AI Asistanı zaten arka planda çalışıyor!")
         return
 
     try:
@@ -127,9 +94,9 @@ def start_telegram_bot():
                     stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL
                 )
-            logger.info("Telegram Bot & AI Asistanı bağımsız arka plan süreci olarak başlatıldı!")
+            print("🤖 Telegram Bot & AI Asistanı bağımsız arka plan süreci olarak başlatıldı!")
     except Exception as e:
-        logger.error(f"Telegram botu başlatılırken hata oluştu: {e}")
+        print(f"⚠️ Telegram botu başlatılırken hata oluştu: {e}")
 
 # Windows console encoding guard
 if sys.platform == "win32":
@@ -139,32 +106,28 @@ if sys.platform == "win32":
     except Exception:
         pass
 
+# Temel loglama konfigürasyonu
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s"
+)
+
 
 def print_banner():
     """Başlangıç banner'ı"""
     banner = """
 +------------------------------------------------------------+
 |                                                            |
-|        WordPress Plugin Vulnerability Scanner v4.1        |
-|         ULTRA TRUE POSITIVE + PARALLEL + LEARNING          |
-|         False Positive: %5→%1 | Speed: 3x-9x Faster        |
+|        WordPress Plugin Vulnerability Scanner v3.0        |
+|             Taint Analysis Engine (TRUE POSITIVE)           |
 |                                                            |
 +------------------------------------------------------------+
 """
     print(banner)
-    logger.info("Scanner v4.1 başlatılıyor...")
-    logger.info("Taint Analysis: AKTİF (source → sink data flow tracking)")
-    logger.info("AI Modu: ULTRA STRICT (temperature 0.0, confidence >= 0.85)")
-    logger.info(f"Database: SQLite ({db.get_database_size():.1f}MB)")
-    
-    # v4.1 özellikleri
-    if parallel_scanner:
-        logger.info(f"⚡ Parallel Scanning: AKTİF ({config.MAX_PARALLEL_WORKERS} workers)")
-    if fp_learner:
-        logger.info(f"🎓 FP Learning: AKTİF ({len(fp_learner.patterns)} pattern)")
-    
+    print("🔬 Taint Analysis: AKTİF (source -> sink data flow tracking)")
+    print("🤖 AI Modu: Taint flow DOĞRULAMA (koddan zafiyet uydurmaz)")
     if config.MAX_BATCHES:
-        logger.info(f"Güvenlik limiti: {config.MAX_BATCHES} batch")
+        print(f"🔒 Güvenlik limiti: {config.MAX_BATCHES} batch")
     print()
 
 
@@ -185,9 +148,8 @@ def validate_config() -> bool:
         errors.append("❌ Telegram Chat ID ayarlanmamış (TELEGRAM_CHAT_ID)")
 
     if errors:
-        for err in errors:
-            logger.error(err)
-        logger.error("⚠️  .env dosyasını düzenleyin ve bilgilerinizi girin")
+        print("\n".join(errors))
+        print("\n⚠️  .env dosyasını düzenleyin ve bilgilerinizi girin\n")
         return False
 
     return True
@@ -305,16 +267,51 @@ def verify_poc(vulns: list) -> list:
     return verified
 
 
+def check_docker_setup():
+    """Docker kurulumunu kontrol et ve kullanıcıya rehberlik et"""
+    if not getattr(config, "ENABLE_POC_VERIFICATION", False):
+        print("🧪 PoC doğrulama: DEVRE DIŞI (.env: ENABLE_POC_VERIFICATION=false)")
+        print("   PoC doğrulama için .env dosyasına ENABLE_POC_VERIFICATION=true ekleyin")
+        return
+
+    # Docker kurulu mu?
+    try:
+        result = subprocess.run(["docker", "--version"], capture_output=True, text=True, timeout=10)
+        if result.returncode != 0:
+            print("🧪 PoC doğrulama: Docker kurulu değil - DEVRE DIŞI")
+            print("   Docker kurmak: https://docs.docker.com/get-docker/")
+            return
+    except Exception:
+        print("🧪 PoC doğrulama: Docker erişilemiyor - DEVRE DIŞI")
+        print("   Docker kurmak: https://docs.docker.com/get-docker/")
+        return
+
+    # WordPress container çalışıyor mu?
+    try:
+        result = subprocess.run(
+            ["docker", "ps", "--filter", "name=wp-test", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=10
+        )
+        if "wp-test" in result.stdout:
+            print("🧪 PoC doğrulama: AKTİF (Docker WordPress çalışıyor)")
+        else:
+            print("🧪 PoC doğrulama: Docker kurulu ama WordPress container çalışmıyor")
+            print("   WordPress container başlatmak için:")
+            print("   docker run -d -p 8080:80 --name wp-test wordpress")
+            print("   Veya .env dosyasında ENABLE_POC_VERIFICATION=false yapın")
+    except Exception:
+        print("🧪 PoC doğrulama: Docker kontrol edilemedi - DEVRE DIŞI")
+
+
 def main():
     """Ana tarama fonksiyonu"""
-    scan_start_time = time.time()
-    
     print_banner()
 
     if not validate_config():
         sys.exit(1)
 
     start_telegram_bot()
+    check_docker_setup()
 
     try:
         analyzer = PluginAnalyzer()
@@ -322,40 +319,31 @@ def main():
         notifier = TelegramNotifier()
         taint_analyzer = TaintAnalyzer()
     except Exception as e:
-        logger.critical(f"Modül başlatma hatası: {e}", exc_info=True)
+        print(f"❌ Modül başlatma hatası: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)
 
-    logger.info("Tarama başlatılıyor...")
-    logger.info(f"Mod: ZAFİYET BULANA KADAR DEVAM ET (ULTRA STRICT)")
-    logger.info(f"Maksimum batch: {config.MAX_BATCHES}")
-    
-    # Audit log
-    logger.audit_scan_start(config.PLUGINS_PER_SCAN, "ultra_strict_v4")
-    
-    # Database stats
-    stats = db.get_stats()
-    logger.info(f"Database: {stats['total_plugins_scanned']} plugin, {stats['total_vulnerabilities_found']} zafiyet")
+    print("🚀 Tarama başlatılıyor...")
+    print("🎯 Mod: ZAFİYET BULANA KADAR DEVAM ET (TAINT ANALYSIS)")
+    print(f"🔒 Maksimum batch: {config.MAX_BATCHES}")
+    print()
 
     total_scanned = 0
     total_vulns_found = 0
     skipped_count = 0
     batch_number = 1
     max_batches = getattr(config, "MAX_BATCHES", 20)
-    
-    # Progress tracker başlat
-    tracker.start_scan(max_batches, config.PLUGINS_PER_SCAN)
 
     while total_vulns_found == 0 and batch_number <= max_batches:
-        # Batch başladı
-        tracker.start_batch(batch_number)
-        logger.info(f"\n{'='*60}")
-        logger.info(f"BATCH #{batch_number}/{max_batches} - Yeni pluginler getiriliyor...")
-        logger.info(f"{'='*60}\n")
+        print(f"\n{'='*60}")
+        print(f"🔄 BATCH #{batch_number}/{max_batches} - Yeni pluginler getiriliyor...")
+        print(f"{'='*60}\n")
 
         plugins = analyzer.get_targeted_plugins(count=config.PLUGINS_PER_SCAN * 3)
 
         if not plugins:
-            logger.warning("Yeni plugin bulunamadı, 30 saniye bekleniyor...")
+            print("⚠️  Yeni plugin bulunamadı, 30 saniye bekleniyor...")
             time.sleep(30)
             batch_number += 1
             continue
@@ -368,38 +356,23 @@ def main():
         for idx, plugin in enumerate(plugins, 1):
 
             if batch_scanned >= config.PLUGINS_PER_SCAN:
-                logger.info(f"Bu batch'te {config.PLUGINS_PER_SCAN} plugin tarandı, durduruluyor...")
+                print(f"\n✅ Bu batch'te {config.PLUGINS_PER_SCAN} plugin tarandı, durduruluyor...")
                 break
 
-            # Progress tracker güncelle
-            tracker.update_plugin(idx, plugin.get('name', 'Unknown'), plugin.get('version', '?'))
-            
-            logger.info(f"\n{'='*60}")
-            logger.info(f"[{idx}/{len(plugins)}] 📦 {plugin.get('name', 'Unknown')} v{plugin.get('version', '?')}")
-            logger.debug(f"⭐ Rating: {plugin.get('rating', 0)}/100 ({plugin.get('num_ratings', 0)} derecelendirme)")
-            logger.debug(f"📊 Active Installs: {plugin.get('active_installs', 0):,}")
-            logger.debug(f"⏰ Son güncelleme: {plugin.get('months_since_update', 0)} ay önce")
-            logger.debug(f"🎯 Öncelik skoru: {plugin.get('priority_score', 0):.1f}")
-            logger.info(f"{'='*60}\n")
-            logger.debug(tracker.get_simple_status())
+            print(f"\n{'='*60}")
+            print(f"[{idx}/{len(plugins)}] 📦 {plugin.get('name', 'Unknown')} v{plugin.get('version', '?')}")
+            print(f"⭐ Rating: {plugin.get('rating', 0)}/100 ({plugin.get('num_ratings', 0)} derecelendirme)")
+            print(f"📊 Active Installs: {plugin.get('active_installs', 0):,}")
+            print(f"⏰ Son güncelleme: {plugin.get('months_since_update', 0)} ay önce")
+            print(f"🎯 Öncelik skoru: {plugin.get('priority_score', 0):.1f}")
+            print(f"{'='*60}\n")
 
-            # Database check
-            if db.is_plugin_scanned(plugin["slug"], plugin.get("version", "")):
-                logger.info(f"✓ {plugin['slug']} zaten taranmış, atlanıyor")
-                skipped_count += 1
-                tracker.update_status("Zaten taranmış (atlanıyor)")
-                continue
-
-            tracker.update_status("Plugin indiriliyor...")
             plugin_path = analyzer.download_plugin(plugin)
             if not plugin_path:
-                logger.warning("Plugin indirilemedi, atlanıyor")
+                print("⚠️  Plugin indirilemedi, atlanıyor\n")
                 skipped_count += 1
-                tracker.update_status("İndirme hatası (atlanıyor)")
                 continue
 
-            # Bilinen CVE check (opsiyonel)
-            tracker.update_status("Bilinen CVE kontrolü...")
             known_cves = check_known_cves(plugin, plugin_path)
             if known_cves.get("known_vulns"):
                 report_with_known = {
@@ -408,47 +381,39 @@ def main():
                 }
                 save_results(report_with_known, plugin["slug"])
                 notifier.send_vulnerability_report(report_with_known)
-                
-                # Database kaydet
-                scan_id = db.add_plugin_scan(
-                    plugin["slug"], plugin.get("name", ""), plugin.get("version", ""),
-                    "known_cve_found", len(known_cves["known_vulns"]), 0, 0
-                )
-                
                 total_vulns_found += 1
-                tracker.increment_vulns()
                 analyzer.cleanup(plugin_path, keep=True)
-                logger.info(f"✅ BİLİNEN CVE EŞLEŞMESİ İLE TAMAMLANDI ({plugin['slug']})")
+                print("\n" + "=" * 60)
+                print(f"✅ BİLİNEN CVE EŞLEŞMESİ İLE HEDEF TAMAMLANDI! ({plugin['slug']})")
+                print("=" * 60)
                 break
 
-            tracker.update_status("PHP dosyaları taranıyor...")
             php_files = analyzer.scan_php_files(plugin_path)
-            logger.info(f"📄 {len(php_files)} PHP dosyası bulundu")
+            print(f"📄 {len(php_files)} PHP dosyası bulundu")
 
             if not php_files:
                 analyzer.cleanup(plugin_path, keep=False)
                 skipped_count += 1
-                db.add_plugin_scan(plugin["slug"], plugin.get("name", ""), plugin.get("version", ""), "no_php_files", 0, 0, 0)
+                analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
                 total_scanned += 1
-                tracker.increment_scanned()
                 batch_scanned += 1
                 continue
 
-            # TAINT ANALYSIS
-            tracker.update_status("Taint analysis yapılıyor...")
-            logger.info("🔬 Taint Analysis başlıyor...")
+            # ================================================================
+            # TAINT ANALYSIS (TRUE POSITIVE MOTORU)
+            # ================================================================
+            print("🔬 Taint Analysis başlıyor...")
             taint_flows = taint_analyzer.analyze_files(php_files)
 
             if not taint_flows:
-                logger.info("✅ Taint akışı bulunamadı (temiz plugin)")
-                db.add_plugin_scan(plugin["slug"], plugin.get("name", ""), plugin.get("version", ""), "clean", 0, 0, 0)
+                print("✅ Taint akışı bulunamadı (temiz plugin)")
+                analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
                 analyzer.cleanup(plugin_path, keep=False)
                 total_scanned += 1
-                tracker.increment_scanned()
                 batch_scanned += 1
                 continue
 
-            # Taint akışı olan dosyalar
+            # Taint akışı olan dosyaları belirle
             flows_by_file = {}
             for flow in taint_flows:
                 fname = flow.get("file", "")
@@ -461,17 +426,16 @@ def main():
                 if php_file["path"] in flows_by_file:
                     suspicious_files.append(php_file)
 
-            logger.info(f"🔍 {len(suspicious_files)} dosyada {len(taint_flows)} taint akışı tespit edildi")
+            print(f"🔍 {len(suspicious_files)} dosyada {len(taint_flows)} taint akışı tespit edildi")
 
             found_vulns_this_plugin = False
 
             if suspicious_files:
-                # AI analysis
-                tracker.update_status("AI ile derin analiz yapılıyor...")
+                # AI ile taint flow doğrulama
                 results = detector.deep_analyze(plugin, suspicious_files, taint_flows)
                 results = detector.filter_high_confidence_vulns(results)
 
-                # PoC verification (opsiyonel)
+                # PoC doğrulama (opsiyonel - Docker)
                 if _poc_verifier and results.get("vulnerabilities_found"):
                     results["vulnerabilities_found"] = verify_poc(results["vulnerabilities_found"])
 
@@ -480,134 +444,78 @@ def main():
                 vulns = results.get("vulnerabilities_found", [])
                 found_vulns_this_plugin = len(vulns) > 0
 
-                # Database kaydet
-                scan_id = db.add_plugin_scan(
-                    plugin["slug"],
-                    plugin.get("name", ""),
-                    plugin.get("version", ""),
-                    "vulnerable" if found_vulns_this_plugin else "clean",
-                    len(vulns),
-                    len(taint_flows),
-                    0
-                )
-                
-                # Zafiyet detaylarını kaydet
-                for vuln in vulns:
-                    db.add_vulnerability(scan_id, plugin["slug"], vuln)
-                    logger.audit_vulnerability_found(
-                        plugin["slug"],
-                        vuln.get("type", "Unknown"),
-                        vuln.get("severity", "High"),
-                        vuln.get("cvss_score", 0.0)
-                    )
+                analyzer.mark_as_scanned(plugin["slug"], plugin["version"], found_vulns_this_plugin)
 
                 if found_vulns_this_plugin:
                     print_vuln_details(vulns)
-                    logger.info("📱 Detaylı Telegram bildirimi gönderiliyor...")
+                    print("📱 Detaylı Telegram bildirimi gönderiliyor...")
                     notifier.send_vulnerability_report(results)
                     total_vulns_found += 1
-                    tracker.increment_vulns()
-                    tracker.update_status("✅ ZAFİYET BULUNDU!")
-                    logger.info(f"\n{'='*60}")
-                    logger.info("✅ HEDEF TAMAMLANDI! GERÇEK ZAFİYET BULUNDU!")
-                    logger.info(f"{'='*60}")
+                    print("\n" + "="*60)
+                    print("✅ HEDEF TAMAMLANDI! GERÇEK ZAFİYET BULUNDU!")
+                    print("="*60)
                     analyzer.cleanup(plugin_path, keep=True)
                 else:
-                    logger.info("✅ Doğrulanabilir zafiyet bulunamadı")
+                    print("\n✅ Doğrulanabilir zafiyet bulunamadı")
                     analyzer.cleanup(plugin_path, keep=False)
             else:
-                logger.info("✅ Taint akışı yok (temiz)")
-                db.add_plugin_scan(plugin["slug"], plugin.get("name", ""), plugin.get("version", ""), "clean", 0, 0, 0)
+                print("✅ Taint akışı yok (temiz)")
+                analyzer.mark_as_scanned(plugin["slug"], plugin["version"], False)
                 analyzer.cleanup(plugin_path, keep=False)
 
             total_scanned += 1
-            tracker.increment_scanned()
             batch_scanned += 1
 
             if total_vulns_found > 0:
                 break
 
             if idx < len(plugins) and batch_scanned < config.PLUGINS_PER_SCAN:
-                logger.debug("⏱️  Sonraki plugin için 5 saniye bekleniyor...")
+                print("\n⏱️  Sonraki plugin için 5 saniye bekleniyor...")
                 time.sleep(5)
 
         if total_vulns_found > 0:
-            logger.info("\n🎊 ARAMA DURDURULDU - ZAFİYET BULUNDU!")
+            print("\n🎊 ARAMA DURDURULDU - ZAFİYET BULUNDU!")
             break
 
-        logger.warning(f"Batch #{batch_number} tamamlandı - Zafiyet bulunamadı")
+        print(f"\n⚠️  Batch #{batch_number} tamamlandı - Zafiyet bulunamadı")
         batch_number += 1
         if batch_number <= max_batches:
-            logger.info("🔄 Yeni batch başlatılıyor...\n")
+            print("🔄 Yeni batch başlatılıyor...\n")
             time.sleep(10)
 
     if batch_number > max_batches and total_vulns_found == 0:
-        logger.warning(f"Maksimum batch limitine ({max_batches}) ulaşıldı.")
-        logger.info("   Daha fazla tarama için tekrar çalıştırın veya MAX_BATCHES'i artırın.")
+        print(f"\n⚠️  Maksimum batch limitine ({max_batches}) ulaşıldı.")
+        print("   Daha fazla tarama için tekrar çalıştırın veya MAX_BATCHES'i artırın.")
 
-    # Final summary
-    scan_duration = time.time() - scan_start_time
-    
-    # Kritik durum kontrolü ve alertler
-    try:
-        # 1. Database boyutu kontrolü
-        db_size_mb = db.get_database_size()
-        if db_size_mb > 20:
-            notifier.send_critical_alert(
-                "Database Boyutu Kritik",
-                f"Database boyutu {db_size_mb:.1f}MB'a ulaştı (limit: 20MB). VACUUM çalıştırın veya eski kayıtları temizleyin."
-            )
-        
-        # 2. Disk alanı kontrolü
-        from health_check import HealthChecker
-        health = HealthChecker()
-        health_status = health.check_all()
-        if not health_status["disk_space"]["ok"]:
-            notifier.send_critical_alert(
-                "Disk Alanı Kritik",
-                f"Disk kullanımı: {health_status['disk_space']['usage_percent']:.1f}% (>{health_status['disk_space']['threshold_percent']}%)"
-            )
-        
-        # 3. Hiç plugin bulunamadığını tespit et (5 scan boyunca)
-        if total_scanned == 0 and batch_number >= 5:
-            notifier.send_critical_alert(
-                "Plugin Bulma Hatası",
-                f"{batch_number} batch boyunca hiç plugin bulunamadı. WordPress.org API'si kontrol edin."
-            )
-    except Exception as e:
-        logger.error(f"Critical alert kontrolü hatası: {e}")
-    
-    logger.info(f"\n{'='*60}")
-    logger.info("✅ TARAMA TAMAMLANDI")
-    logger.info(f"{'='*60}")
-    logger.info(f"📊 Toplam taranan plugin: {total_scanned}")
-    logger.info(f"⏭️  Atlanan plugin: {skipped_count}")
-    logger.info(f"🚨 Zafiyet bulunan plugin: {total_vulns_found}")
-    logger.info(f"⏱️  Toplam süre: {scan_duration:.1f}s ({scan_duration/60:.1f}dk)")
-    logger.info(f"💾 Database boyutu: {db.get_database_size():.1f}MB")
-    logger.info(f"{'='*60}\n")
+    print(f"\n{'='*60}")
+    print("✅ TARAMA TAMAMLANDI")
+    print(f"{'='*60}")
+    print(f"📊 Toplam taranan plugin: {total_scanned}")
+    print(f"⏭️  Atlanan plugin: {skipped_count}")
+    print(f"🚨 Zafiyet bulunan plugin: {total_vulns_found}")
+    print(f"💾 Taranan pluginler veritabanına kaydedildi")
+    print(f"{'='*60}\n")
 
-    # Audit log
-    logger.audit_scan_complete(total_scanned, total_vulns_found, scan_duration)
-    
     notifier.send_scan_complete(total_scanned, total_vulns_found)
 
     if total_vulns_found > 0:
-        logger.info("🎉 Tebrikler! Potansiyel CVE adayı buldunuz!")
-        logger.info("📌 Sonraki adımlar:")
-        logger.info("   1. results/ klasöründeki raporları inceleyin")
-        logger.info("   2. Zafiyeti manuel olarak doğrulayın")
-        logger.info("   3. Plugin geliştiricisine özel olarak bildirin")
-        logger.info("   4. 90 gün sonra CVE başvurusu yapın: https://cveform.mitre.org/")
-        logger.info("\n⚠️  Lütfen etik ve yasal kurallara uyun!\n")
+        print("🎉 Tebrikler! Potansiyel CVE adayı buldunuz!")
+        print("📌 Sonraki adımlar:")
+        print("   1. results/ klasöründeki raporları inceleyin")
+        print("   2. Zafiyeti manuel olarak doğrulayın")
+        print("   3. Plugin geliştiricisine özel olarak bildirin")
+        print("   4. 90 gün sonra CVE başvurusu yapın: https://cveform.mitre.org/")
+        print("\n⚠️  Lütfen etik ve yasal kurallara uyun!\n")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        logger.warning("\n\nTarama kullanıcı tarafından durduruldu")
+        print("\n\n⚠️  Tarama kullanıcı tarafından durduruldu")
         sys.exit(0)
     except Exception as e:
-        logger.critical(f"\nKritik hata: {e}", exc_info=True)
+        print(f"\n❌ Kritik hata: {e}")
+        import traceback
+        traceback.print_exc()
         sys.exit(1)

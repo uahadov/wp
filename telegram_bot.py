@@ -9,10 +9,11 @@ import json
 import logging
 from datetime import datetime
 from pathlib import Path
-from telegram import Update
-from telegram.ext import Application, CommandHandler, ContextTypes
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from openai import OpenAI
 import config
+from progress_tracker import get_tracker
 
 logger = logging.getLogger(__name__)
 
@@ -23,18 +24,18 @@ class TelegramBotHandler:
         self.results_dir = Path(config.RESULTS_DIR)
         self.scanned_db = Path(config.SCANNED_PLUGINS_DB)
         self.ai_client = OpenAI(
-            base_url=config.GITHUB_API_BASE,
-            api_key=config.GITHUB_TOKEN,
+            base_url=config.PRIMARY_API_BASE,
+            api_key=config.PRIMARY_API_KEY,
         )
-        self.gemini_client = None
-        if config.GEMINI_API_KEY and config.GEMINI_API_KEY != "your_gemini_api_key_here":
+        self.validator_client = None
+        if config.SECONDARY_API_KEY:
             try:
-                self.gemini_client = OpenAI(
-                    base_url="https://generativelanguage.googleapis.com/v1beta/openai/",
-                    api_key=config.GEMINI_API_KEY,
+                self.validator_client = OpenAI(
+                    base_url=config.SECONDARY_API_BASE,
+                    api_key=config.SECONDARY_API_KEY,
                 )
             except Exception as e:
-                logger.warning(f"Telegram Bot Gemini client başlatılamadı: {e}")
+                logger.warning(f"{config.SECONDARY_PROVIDER} istemcisi başlatılamadı: {e}")
 
     @staticmethod
     def _escape(text: str) -> str:
@@ -62,23 +63,41 @@ class TelegramBotHandler:
         return "Henüz raporlanmış aktif zafiyet verisi bulunmuyor."
 
     async def start_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """Bot başlangıç komutu"""
+        """Bot başlangıç komutu - Mobile-Friendly Inline Buttons"""
+        # Inline keyboard (mobile-friendly buttons)
+        keyboard = [
+            [
+                InlineKeyboardButton("📊 İstatistikler", callback_data="stats"),
+                InlineKeyboardButton("🔄 İlerleme", callback_data="progress")
+            ],
+            [
+                InlineKeyboardButton("🔥 Son Zafiyet", callback_data="latest"),
+                InlineKeyboardButton("📋 Tüm Liste", callback_data="list")
+            ],
+            [
+                InlineKeyboardButton("⚙️ Sistem Durumu", callback_data="status"),
+                InlineKeyboardButton("❓ Yardım", callback_data="help")
+            ]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
         welcome_message = (
-            "🤖 <b>WordPress Zafiyet Tarayıcı &amp; Dual-AI Asistanı</b>\n\n"
-            "<b>📋 Kullanılabilir Komutlar:</b>\n"
-            "/start - Bot bilgileri\n"
-            "/stats - Tarama istatistikleri\n"
-            "/latest - Son bulunan zafiyeti göster\n"
-            "/m &lt;mesaj&gt; - GPT-4o (1. AI) ile konuş!\n"
-            "/m2 &lt;mesaj&gt; - Gemini 2.5/3.5 Flash (2. Hakem AI) ile konuş!\n"
-            "/list - Bulunan tüm zafiyetli pluginler\n"
-            "/status - Sistem durumu\n"
-            "/help - Yardım menüsü\n\n"
-            "<b>💬 AI Soru Sor (Örnekler):</b>\n"
-            "• <code>/m Son zafiyeti cURL ile nasıl test edebilirim?</code>\n"
-            "• <code>/m2 Bu bulunan açık gerçekten CVE almaya değer mi yoksa saçma mı?</code>"
+            "🤖 <b>WordPress Zafiyet Tarayıcı v4.1</b>\n"
+            "<i>Dual-AI + Machine Learning</i>\n\n"
+            "👇 <b>Hızlı Erişim Menüsü:</b>\n"
+            "Aşağıdaki butonlara tıklayarak bilgi alabilirsiniz.\n\n"
+            "<b>💬 AI Asistanı:</b>\n"
+            "• <code>/m &lt;soru&gt;</code> - GPT-4o ile konuş\n"
+            "• <code>/m2 &lt;soru&gt;</code> - Gemini Hakem AI\n\n"
+            "<b>🎓 Manuel Doğrulama:</b>\n"
+            "• <code>/confirm &lt;vuln_id&gt; true/false &lt;sebep&gt;</code>\n"
+            "  Örnek: <code>/confirm 42 false \"WooCommerce nonce var\"</code>"
         )
-        await update.message.reply_text(welcome_message, parse_mode="HTML")
+        await update.message.reply_text(
+            welcome_message,
+            parse_mode="HTML",
+            reply_markup=reply_markup
+        )
 
     async def ai_ask_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """/m <mesaj> komutu ile GPT-4o AI'a soru sor"""
@@ -111,7 +130,7 @@ class TelegramBotHandler:
 
         try:
             response = self.ai_client.chat.completions.create(
-                model=config.GITHUB_MODEL,
+                model=config.PRIMARY_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
@@ -122,7 +141,7 @@ class TelegramBotHandler:
 
             ai_answer = response.choices[0].message.content
             escaped_answer = self._escape(ai_answer)
-            formatted_response = f"🤖 <b>GPT-4o Yanıtı:</b>\n\n{escaped_answer}"
+            formatted_response = f"🤖 <b>{config.PRIMARY_PROVIDER} Yanıtı:</b>\n\n{escaped_answer}"
 
             if len(formatted_response) > 4096:
                 formatted_response = formatted_response[:4090] + "\n<i>...(kırpıldı)</i>"
@@ -130,33 +149,33 @@ class TelegramBotHandler:
             await status_msg.edit_text(formatted_response, parse_mode="HTML")
 
         except Exception as e:
-            logger.error(f"GPT-4o AI yanıt hatası: {e}", exc_info=True)
+            logger.error(f"{config.PRIMARY_PROVIDER} AI yanıt hatası: {e}", exc_info=True)
             await status_msg.edit_text(
-                f"❌ <b>GPT-4o AI Yanıt Hatası:</b> {self._escape(str(e)[:200])}",
+                f"❌ <b>{config.PRIMARY_PROVIDER} AI Yanıt Hatası:</b> {self._escape(str(e)[:200])}",
                 parse_mode="HTML"
             )
 
     async def ai2_ask_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
-        """/m2 <mesaj> komutu ile Google Gemini Hakem AI'a soru sor"""
+        """/m2 <mesaj> komutu ile İkincil (Hakem) AI'a soru sor"""
         if not context.args:
             await update.message.reply_text(
-                "⚠️ Lütfen Gemini Hakem AI'a sormak istediğiniz soruyu yazın.\n\n"
+                "⚠️ Lütfen Hakem AI'ya sormak istediğiniz soruyu yazın.\n\n"
                 "<b>Örnek:</b>\n<code>/m2 Bu açık gerçekten CVE almaya değer mi?</code>",
                 parse_mode="HTML"
             )
             return
 
-        if not self.gemini_client:
+        if not self.validator_client:
             await update.message.reply_text(
-                "❌ <b>Google Gemini API Anahtarı Tanımlı Değil!</b>\n"
-                ".env dosyanıza <code>GEMINI_API_KEY</code> ekleyin.",
+                f"❌ <b>{config.SECONDARY_PROVIDER or 'Hakem'} API Anahtarı Tanımlı Değil!</b>\n"
+                "İkincil doğrulayıcı sağlayıcının ilgili anahtarını .env dosyanıza ekleyin.",
                 parse_mode="HTML"
             )
             return
 
         user_query = " ".join(context.args)
         status_msg = await update.message.reply_text(
-            "⚖️ <i>Gemini Hakem AI (Pentester) inceliyor...</i>",
+            f"⚖️ <i>{config.SECONDARY_PROVIDER} Hakem AI (Pentester) inceliyor...</i>",
             parse_mode="HTML"
         )
 
@@ -173,8 +192,8 @@ class TelegramBotHandler:
         )
 
         try:
-            response = self.gemini_client.chat.completions.create(
-                model=config.GEMINI_MODEL,
+            response = self.validator_client.chat.completions.create(
+                model=config.SECONDARY_MODEL,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_query}
@@ -185,7 +204,7 @@ class TelegramBotHandler:
 
             ai_answer = response.choices[0].message.content
             escaped_answer = self._escape(ai_answer)
-            formatted_response = f"⚖️ <b>Gemini Hakem AI Yanıtı:</b>\n\n{escaped_answer}"
+            formatted_response = f"⚖️ <b>{config.SECONDARY_PROVIDER} Hakem AI Yanıtı:</b>\n\n{escaped_answer}"
 
             if len(formatted_response) > 4096:
                 formatted_response = formatted_response[:4090] + "\n<i>...(kırpıldı)</i>"
@@ -193,9 +212,9 @@ class TelegramBotHandler:
             await status_msg.edit_text(formatted_response, parse_mode="HTML")
 
         except Exception as e:
-            logger.error(f"Gemini AI yanıt hatası: {e}", exc_info=True)
+            logger.error(f"{config.SECONDARY_PROVIDER} AI yanıt hatası: {e}", exc_info=True)
             await status_msg.edit_text(
-                f"❌ <b>Gemini AI Yanıt Hatası:</b> {self._escape(str(e)[:200])}",
+                f"❌ <b>{config.SECONDARY_PROVIDER} AI Yanıt Hatası:</b> {self._escape(str(e)[:200])}",
                 parse_mode="HTML"
             )
 
@@ -343,7 +362,7 @@ class TelegramBotHandler:
         ai_status = "✅ Hazır" 
         try:
             # API'ye ping atmak yerine sadece client'ın var olup olmadığını kontrol et
-            if not config.GITHUB_TOKEN or config.GITHUB_TOKEN == "your_github_token_here":
+            if not config.PRIMARY_API_KEY or config.PRIMARY_API_KEY in ("", "your_github_token_here", "your_gemini_api_key_here"):
                 ai_status = "❌ Token Eksik"
         except Exception:
             ai_status = "⚠️ Bilinmiyor"
@@ -361,9 +380,146 @@ class TelegramBotHandler:
         )
         await update.message.reply_text(message, parse_mode="HTML")
 
+    async def progress_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """İlerleme durumunu göster"""
+        try:
+            tracker = get_tracker()
+            
+            if tracker.start_time is None:
+                await update.message.reply_text(
+                    "⚠️ <b>Tarama henüz başlamadı</b>\n\n"
+                    "Tarama başladığında ilerleme durumunu buradan takip edebilirsiniz.",
+                    parse_mode="HTML"
+                )
+                return
+            
+            report = tracker.get_progress_report()
+            await update.message.reply_text(report, parse_mode="HTML")
+            
+        except Exception as e:
+            logger.error(f"Progress hatası: {e}", exc_info=True)
+            await update.message.reply_text(
+                f"❌ <b>İlerleme durumu alınamadı:</b> {self._escape(str(e)[:200])}",
+                parse_mode="HTML"
+            )
+    
     async def help_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
         """Yardım menüsü"""
         await self.start_command(update, context)
+    
+    async def button_callback(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Inline button callback handler (mobile-friendly)"""
+        query = update.callback_query
+        await query.answer()  # ACK
+        
+        # Callback data'ya göre ilgili komutu çağır
+        callback_map = {
+            "stats": self.stats_command,
+            "progress": self.progress_command,
+            "latest": self.latest_command,
+            "list": self.list_command,
+            "status": self.status_command,
+            "help": self.start_command
+        }
+        
+        handler = callback_map.get(query.data)
+        if handler:
+            # Fake update objesi oluştur (callback_query.message kullanarak)
+            # Bu handler'ların update.message beklediği için gerekli
+            try:
+                # Message'ı direkt query.message'dan al
+                fake_update = Update(
+                    update_id=update.update_id,
+                    message=query.message
+                )
+                fake_update.callback_query = query
+                
+                await handler(fake_update, context)
+            except Exception as e:
+                logger.error(f"Button callback hatası: {e}", exc_info=True)
+                await query.message.reply_text(
+                    f"❌ Hata oluştu: {str(e)[:100]}",
+                    parse_mode="HTML"
+                )
+        else:
+            await query.message.reply_text("❌ Bilinmeyen komut")
+    
+    async def confirm_command(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """/confirm <vuln_id> true/false <reason> - Manuel doğrulama (FP Learning)"""
+        if len(context.args) < 3:
+            await update.message.reply_text(
+                "⚠️ <b>Kullanım:</b>\n"
+                "<code>/confirm &lt;vuln_id&gt; true/false &lt;sebep&gt;</code>\n\n"
+                "<b>Örnekler:</b>\n"
+                "• <code>/confirm 42 false WooCommerce nonce var</code>\n"
+                "• <code>/confirm 15 true Gerçekten SQL Injection</code>\n\n"
+                "Sistem bu doğrulamadan öğrenecek ve gelecekte daha iyi filtreleme yapacak!",
+                parse_mode="HTML"
+            )
+            return
+        
+        try:
+            vuln_id = int(context.args[0])
+            is_true = context.args[1].lower() in ('true', 't', 'yes', '1')
+            reason = " ".join(context.args[2:])
+            
+            # FP Learner'a kaydet
+            from false_positive_learner import get_learner
+            learner = get_learner()
+            
+            success = learner.add_manual_validation(
+                vuln_id=vuln_id,
+                is_true_positive=is_true,
+                reason=reason,
+                user=update.effective_user.username or "telegram_user"
+            )
+            
+            if success:
+                result_emoji = "✅" if is_true else "❌"
+                result_text = "TRUE POSITIVE" if is_true else "FALSE POSITIVE"
+                
+                message = (
+                    f"{result_emoji} <b>Manuel Doğrulama Kaydedildi!</b>\n\n"
+                    f"<b>Vuln ID:</b> #{vuln_id}\n"
+                    f"<b>Sonuç:</b> {result_text}\n"
+                    f"<b>Sebep:</b> {self._escape(reason)}\n\n"
+                )
+                
+                if not is_true:
+                    message += (
+                        "🎓 <b>Sistem Öğrendi!</b>\n"
+                        "Bu pattern gelecek taramalarda dikkate alınacak.\n"
+                        "False positive oranı azalacak! 🚀"
+                    )
+                
+                # İstatistikleri göster
+                stats = learner.get_statistics()
+                message += (
+                    f"\n\n📊 <b>Learning Stats:</b>\n"
+                    f"• Toplam Pattern: {stats['total_patterns']}\n"
+                    f"• Doğrulamalar: {stats['total_validations']}\n"
+                    f"• FP Rate: {stats['false_positive_rate']:.1f}%"
+                )
+                
+                await update.message.reply_text(message, parse_mode="HTML")
+            else:
+                await update.message.reply_text(
+                    "❌ Doğrulama kaydedilemedi. Vuln ID geçerli mi kontrol edin.",
+                    parse_mode="HTML"
+                )
+        
+        except ValueError:
+            await update.message.reply_text(
+                "❌ Geçersiz vuln_id! Sayı olmalı.\n"
+                "Örnek: <code>/confirm 42 false sebep</code>",
+                parse_mode="HTML"
+            )
+        except Exception as e:
+            logger.error(f"Confirm command hatası: {e}", exc_info=True)
+            await update.message.reply_text(
+                f"❌ Hata: {self._escape(str(e)[:200])}",
+                parse_mode="HTML"
+            )
 
     async def error_handler(self, update: object, context: ContextTypes.DEFAULT_TYPE):
         """Global hata yakalayıcı"""
@@ -383,10 +539,15 @@ def start_bot():
     application.add_handler(CommandHandler("m", handler.ai_ask_command))
     application.add_handler(CommandHandler("m2", handler.ai2_ask_command))
     application.add_handler(CommandHandler("stats", handler.stats_command))
+    application.add_handler(CommandHandler("progress", handler.progress_command))
     application.add_handler(CommandHandler("latest", handler.latest_command))
     application.add_handler(CommandHandler("list", handler.list_command))
     application.add_handler(CommandHandler("status", handler.status_command))
     application.add_handler(CommandHandler("help", handler.help_command))
+    application.add_handler(CommandHandler("confirm", handler.confirm_command))
+    
+    # Inline button callback handler (mobile-friendly)
+    application.add_handler(CallbackQueryHandler(handler.button_callback))
 
     # Global hata yakalayıcı
     application.add_error_handler(handler.error_handler)

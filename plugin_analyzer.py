@@ -304,13 +304,31 @@ class PluginAnalyzer:
             extract_path.mkdir(exist_ok=True)
 
             with zipfile.ZipFile(zip_path, "r") as zip_ref:
-                # Zip Slip saldırısına karşı koruma: her dosya yolunu kontrol et
+                # Zip Slip saldırısına karşı koruma: her dosya yolunu
+                # (../, mutlak yol vb.) hedef dizinin dışına taşacak şekilde doğrula.
+                # Güvenli olmayan üyeleri ATLAR, yalnızca güvenli olanları ayıklar.
+                target_resolved = extract_path.resolve()
+                unsafe_members = []
                 for member in zip_ref.namelist():
-                    member_path = extract_path / member
-                    if not str(member_path.resolve()).startswith(str(extract_path.resolve())):
-                        print(f"⚠️ Zip Slip girişimi tespit edildi: {member}")
+                    if member.endswith("/"):
                         continue
-                zip_ref.extractall(extract_path)
+                    member_path = (extract_path / member).resolve()
+                    try:
+                        is_inside = member_path.is_relative_to(target_resolved)
+                    except AttributeError:  # Python < 3.9
+                        is_inside = str(member_path).startswith(str(target_resolved))
+                    if not is_inside:
+                        unsafe_members.append(member)
+
+                if unsafe_members:
+                    print(f"⚠️ {len(unsafe_members)} Zip Slip girişimi tespit edildi, atlanıyor: "
+                          f"{', '.join(unsafe_members[:5])}")
+                    for member in zip_ref.namelist():
+                        if member in unsafe_members or member.endswith("/"):
+                            continue
+                        zip_ref.extract(member, extract_path)
+                else:
+                    zip_ref.extractall(extract_path)
 
             zip_path.unlink(missing_ok=True)
             print(f"✅ {plugin.get('name', slug)} indirildi ve açıldı ({total_bytes // 1024}KB)")
